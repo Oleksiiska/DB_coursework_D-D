@@ -8,8 +8,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Generic, TypeVar
 
-from app.domain.values import Filters, Page, Snippet
+from app.domain.values import (
+    AdventureFilters,
+    Page,
+    SearchSpecification,
+    Snippet,
+    SortOrder,
+)
+
+TCard = TypeVar("TCard")
 
 # --------------------------------------------------------------------------
 # Вхідні DTO
@@ -18,16 +27,36 @@ from app.domain.values import Filters, Page, Snippet
 
 @dataclass(frozen=True, slots=True)
 class SearchQueryDTO:
-    """Запит користувача до шару сценаріїв."""
+    """Пошуковий запит. Спільний для пошуку пригод, монстрів і зустрічей;
+    вид фільтрів визначає обробник."""
 
     raw_text: str
-    filters: Filters = field(default_factory=Filters)
+    filters: SearchSpecification = field(default_factory=AdventureFilters)
     page: Page = field(default_factory=Page)
+    sort: SortOrder = SortOrder.RELEVANCE
 
     @classmethod
     def from_request(cls, params: dict) -> "SearchQueryDTO":
         """Розбір параметрів HTTP-запиту."""
         raise NotImplementedError
+
+
+@dataclass(frozen=True, slots=True)
+class PlayStatisticsQueryDTO:
+    """Запит статистики реальної гри (група запитів 7)."""
+
+    char_class: str | None = None
+    level: int | None = None
+    limit: int = 10
+
+
+@dataclass(frozen=True, slots=True)
+class CampaignQueryDTO:
+    """Запит ланцюжка кампанії (група запитів 6)."""
+
+    setting_id: str
+    level_from: int = 1
+    level_to: int = 10
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,10 +124,60 @@ class MonsterCardDTO:
     play_count: int = 0
     statblock: dict = field(default_factory=dict)
     appears_in: list[str] = field(default_factory=list)
+    snippets: list[Snippet] = field(default_factory=list)
 
     @classmethod
-    def from_entity(cls, entity) -> "MonsterCardDTO":
+    def from_entity(cls, entity, snippets: list[Snippet] | None = None) -> "MonsterCardDTO":
         raise NotImplementedError
+
+
+@dataclass(slots=True)
+class EncounterCardDTO:
+    """Картка реальної зустрічі — результат пошуку за наративом."""
+
+    encounter_id: str
+    started_at: datetime
+    duration_minutes: float | None = None
+    rounds_count: int | None = None
+    participants_count: int | None = None
+    monster_names: list[str] = field(default_factory=list)
+    narrative_excerpt: str | None = None
+    snippets: list[Snippet] = field(default_factory=list)
+
+    @classmethod
+    def from_entity(cls, entity, snippets: list[Snippet] | None = None) -> "EncounterCardDTO":
+        raise NotImplementedError
+
+
+@dataclass(slots=True)
+class CharacterCardDTO:
+    """Картка персонажа гравця з реальної гри (група запитів 4)."""
+
+    character_id: str
+    name: str
+    race: str | None = None
+    char_class: str | None = None
+    level: int | None = None
+    is_multiclass: bool = False
+    spells: list[str] = field(default_factory=list)
+    encounters_count: int = 0
+
+    @classmethod
+    def from_entity(cls, entity) -> "CharacterCardDTO":
+        raise NotImplementedError
+
+
+@dataclass(slots=True)
+class AuthorCardDTO:
+    """Картка автора: інші роботи та співавтори (група запитів 5)."""
+
+    author_id: str
+    name: str
+    bio: str | None = None
+    profile_url: str | None = None
+    avg_rating: float | None = None
+    adventures: list[AdventureCardDTO] = field(default_factory=list)
+    co_authors: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -119,14 +198,28 @@ class RecommendationDTO:
 
 
 @dataclass(slots=True)
-class SearchResultDTO:
-    items: list[AdventureCardDTO] = field(default_factory=list)
+class SearchResultDTO(Generic[TCard]):
+    """Результат пошуку. Параметризований типом картки."""
+
+    items: list[TCard] = field(default_factory=list)
     total: int = 0
     page: int = 1
     page_size: int = 20
     cache_hit: bool = False
     latency_ms: int = 0
     normalized_query: str = ""
+
+
+@dataclass(slots=True)
+class PlayStatisticsDTO:
+    """Статистика реальної гри. Медіани — через викиди в розподілах."""
+
+    popular_monsters: list[tuple[str, int]] = field(default_factory=list)
+    typical_spells: list[tuple[str, int]] = field(default_factory=list)
+    class_race: list[tuple[str, str, int]] = field(default_factory=list)
+    party_composition: list[tuple[str, int]] = field(default_factory=list)
+    median_duration_minutes: float | None = None
+    median_rounds: float | None = None
 
 
 @dataclass(slots=True)
@@ -178,9 +271,15 @@ class LiveStatsDTO:
 
 __all__ = [
     "AdventureCardDTO",
+    "AuthorCardDTO",
+    "CampaignQueryDTO",
+    "CharacterCardDTO",
+    "EncounterCardDTO",
     "IngestReport",
     "LiveStatsDTO",
     "MonsterCardDTO",
+    "PlayStatisticsDTO",
+    "PlayStatisticsQueryDTO",
     "QueryLogItemDTO",
     "RateSettingDTO",
     "RecommendationDTO",

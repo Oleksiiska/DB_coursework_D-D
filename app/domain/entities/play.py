@@ -1,12 +1,13 @@
 """Сутності пласту «практика гри»: персонаж, зустріч, участь монстра.
 
-Джерело — записи реальних ігор.
+Джерело — записи реальних ігор (п. 2.5, додаток А, таблиці А.9–А.11).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import ClassVar
 
 from app.domain.values import HpStatus, Provenance
 
@@ -30,7 +31,7 @@ class ClassLevel:
 
 @dataclass(slots=True)
 class CombatPayload:
-    """Корисне навантаження: бойові переліки.
+    """Корисне навантаження: бойові переліки (додаток А, таблиця А.9).
 
     У джерелі — рядки через кому, попри назви полів.
     """
@@ -57,7 +58,7 @@ class PlayerCharacter:
     classes_all: list[ClassLevel] = field(default_factory=list)
     hp: HitPoints = field(default_factory=HitPoints)
 
-    # Закляття — вкладений масив назв, не окрема сутність (п. 2.4.1)
+    # Закляття — вкладений масив назв, не окрема сутність (п. 1.4.1)
     spells: list[str] = field(default_factory=list)
     spells_srd: list[str] = field(default_factory=list)
 
@@ -78,13 +79,18 @@ class PlayerCharacter:
 
 @dataclass(slots=True)
 class MonsterParticipation:
-    """Участь монстра у зустрічі — асоціативний клас.
+    """Участь монстра у зустрічі — асоціативний клас на зв'язку
+    «Зустріч — Монстр» (додаток А, таблиця А.11).
 
-    Формується з учасників із порожнім полем класу (87,5%).
+    Формується з учасників із порожнім полем класу (87,5%). Власного
+    ключа не має: запис ідентифікується парою «зустріч — мітка екземпляра»
+    і посилається на обидві сутності. Зберігається окремою колекцією:
+    42 803 записи з природним перекосом за монстрами — матеріал для
+    перевірки ключа розподілу.
     """
 
-    encounter_id: str
     instance_label: str
+    encounter_id: str
     monster_id: str | None = None
     monster_name_raw: str | None = None
     hp: HitPoints = field(default_factory=HitPoints)
@@ -110,14 +116,13 @@ class Encounter:
     rounds_count: int | None = None
     participants_count: int | None = None
     player_character_ids: list[str] = field(default_factory=list)
-    participations: list[MonsterParticipation] = field(default_factory=list)
     narrative_text: str | None = None
     commands: list[str] = field(default_factory=list)
     messages_count: int | None = None
     is_abandoned: bool = False
 
-    #: Поріг відсікання викидів (п. 3.5.6): бої понад 8 годин — покинуті сесії
-    ABANDONED_THRESHOLD_SECONDS: int = 8 * 3600
+    #: Поріг відсікання викидів (п. 2.5.6): бої понад 8 годин — покинуті сесії
+    ABANDONED_THRESHOLD_SECONDS: ClassVar[int] = 8 * 3600
 
     def validate(self) -> list[str]:
         """Обов'язкові: encounter_id, started_at."""
@@ -132,5 +137,5 @@ class Encounter:
         raise NotImplementedError
 
     def is_combat_heavy(self) -> bool:
-        """Класифікація за складом команд, без аналізу тексту (п. 3.5.7)."""
+        """Класифікація за складом команд, без аналізу тексту (п. 2.5.7)."""
         raise NotImplementedError

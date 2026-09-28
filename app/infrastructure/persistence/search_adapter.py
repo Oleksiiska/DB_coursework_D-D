@@ -4,27 +4,28 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
-from app.domain.values import Filters, Page, Snippet
+from app.domain.values import Page, SearchHits, SearchSpecification, Snippet, SortOrder
 
 
 class SearchIndexAdapter:
     """Реалізує порт `SearchIndex`.
 
-    Індекс зберігає лише поля, потрібні для пошуку й формування видачі;
+    Один клас — три екземпляри з різними індексами: пригод, монстрів,
+    зустрічей. Індекс зберігає лише поля, потрібні для пошуку й видачі;
     повні документи читаються з документного сховища за ключами.
     """
 
-    INDEX_NAME = "adventures_idx"
-
-    def __init__(self, client: Any) -> None:
+    def __init__(self, client: Any, index_name: str) -> None:
         self._client = client
+        self._index_name = index_name
 
     async def search(
         self,
         text: str,
-        filters: Filters,
+        spec: SearchSpecification,
         page: Page,
-    ) -> tuple[list[str], dict[str, list[Snippet]], int]:
+        sort: SortOrder = SortOrder.RELEVANCE,
+    ) -> SearchHits:
         raise NotImplementedError
 
     async def index_many(self, documents: Sequence[dict]) -> int:
@@ -34,9 +35,9 @@ class SearchIndexAdapter:
     async def delete(self, document_id: str) -> bool:
         raise NotImplementedError
 
-    def _build_filter_clause(self, filters: Filters) -> dict[str, Any]:
+    def _build_filter_clause(self, spec: SearchSpecification) -> dict[str, Any]:
         raise NotImplementedError
 
-    def _parse_highlights(self, raw: dict[str, Any]) -> dict[str, list[Snippet]]:
+    def _parse_highlights(self, raw: dict[str, Any]) -> dict[str, tuple[Snippet, ...]]:
         """Перетворення відповіді рушія на доменні фрагменти."""
         raise NotImplementedError

@@ -1,0 +1,108 @@
+@startuml 01-modules
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam dpi 150
+skinparam defaultFontSize 12
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam ArrowColor #333333
+skinparam HeaderFontColor #777777
+skinparam HeaderFontSize 10
+hide empty members
+
+header
+станом на 28.09.2026 · побудовано з вихідного коду
+endheader
+
+skinparam componentStyle rectangle
+package "процеси" #FFF8E7 {
+  component "api" as m_processes_api
+  component "crawler_worker" as m_processes_crawler_worker
+  component "csv_loader" as m_processes_csv_loader
+  component "generator_worker" as m_processes_generator_worker
+  component "ingest_worker" as m_processes_ingest_worker
+  component "launcher" as m_processes_launcher
+}
+package "presentation — подання" #F8F4EC {
+  component "rest" as m_presentation_rest
+  component "stream" as m_presentation_stream
+}
+package "application — сценарії" #F2EEF6 {
+  component "commands" as m_application_commands
+  component "dto" as m_application_dto
+  component "ports" as m_application_ports
+  component "queries" as m_application_queries
+}
+package "domain — предметна область" #EDF4F2 {
+  component "entities" as m_domain_entities
+  component "errors" as m_domain_errors
+  component "ports" as m_domain_ports
+  component "services" as m_domain_services
+  component "values" as m_domain_values
+}
+package "infrastructure — адаптери" #F4F4F4 {
+  component "config" as m_infrastructure_config
+  component "messaging" as m_infrastructure_messaging
+  component "observability" as m_infrastructure_observability
+  component "persistence" as m_infrastructure_persistence
+  component "sources" as m_infrastructure_sources
+}
+m_application_commands --> m_application_dto
+m_application_commands --> m_domain_ports
+m_application_commands --> m_domain_services
+m_application_commands --> m_domain_values
+m_application_dto --> m_domain_values
+m_application_ports --> m_application_dto
+m_application_queries --> m_application_dto
+m_application_queries --> m_domain_entities
+m_application_queries --> m_domain_ports
+m_application_queries --> m_domain_services
+m_application_queries --> m_domain_values
+m_domain_entities --> m_domain_values
+m_domain_ports --> m_domain_entities
+m_domain_ports --> m_domain_values
+m_domain_services --> m_domain_entities
+m_domain_services --> m_domain_errors
+m_domain_services --> m_domain_values
+m_application_commands <-- m_infrastructure_config
+m_application_queries <-- m_infrastructure_config
+m_domain_ports <-- m_infrastructure_config
+m_domain_services <-- m_infrastructure_config
+m_domain_values <-- m_infrastructure_config
+m_infrastructure_messaging <-- m_infrastructure_config
+m_infrastructure_observability <-- m_infrastructure_config
+m_infrastructure_persistence <-- m_infrastructure_config
+m_infrastructure_sources <-- m_infrastructure_config
+m_domain_values <-- m_infrastructure_messaging
+m_domain_entities <-- m_infrastructure_persistence
+m_domain_values <-- m_infrastructure_persistence
+m_presentation_rest --> m_application_dto
+m_presentation_rest --> m_application_ports
+m_presentation_stream --> m_application_dto
+m_presentation_stream --> m_application_ports
+m_processes_api --> m_infrastructure_config
+m_processes_crawler_worker --> m_domain_ports
+m_processes_csv_loader --> m_domain_ports
+m_processes_csv_loader --> m_domain_values
+m_processes_generator_worker --> m_domain_ports
+m_processes_ingest_worker --> m_application_ports
+m_processes_ingest_worker --> m_domain_ports
+m_processes_launcher --> m_infrastructure_config
+m_processes_launcher --> m_processes_crawler_worker
+m_processes_launcher --> m_processes_csv_loader
+m_processes_launcher --> m_processes_generator_worker
+m_processes_launcher --> m_processes_ingest_worker
+m_application_ports <|.. m_application_commands
+m_application_ports <|.. m_application_queries
+m_domain_ports <|.. m_infrastructure_messaging
+m_domain_ports <|.. m_infrastructure_observability
+m_domain_ports <|.. m_infrastructure_persistence
+m_domain_ports <|.. m_infrastructure_sources
+m_processes_api -[hidden]down-> m_presentation_rest
+m_presentation_rest -[hidden]down-> m_application_commands
+m_application_commands -[hidden]down-> m_domain_entities
+legend right
+  ──>  імпорт модуля
+  ‥‥▷  реалізація портів (без імпорту)
+endlegend
+@enduml

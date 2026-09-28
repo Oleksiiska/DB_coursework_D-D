@@ -1,4 +1,4 @@
-"""Сутності предметної області."""
+"""Сутності предметної області (вісім сутностей і асоціативний клас, п. 1.4)."""
 
 from app.domain.entities.adventure import Adventure, Review
 from app.domain.entities.catalog import Author, Setting, Tag

@@ -1,4 +1,4 @@
-"""Сценарій «статистика в реальному часі» для панелі моніторингу."""
+"""Сценарій «статистика в реальному часі» для панелі моніторингу (група 10)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from app.domain.ports import CacheStore, EventPublisher, MetricsSink
 
 
 class GetLiveStatsHandler:
-    """Зріз стану системи. Читає лише лічильники, сховищ не чіпає."""
+    """Зріз стану системи. Читає лише лічильники, основних сховищ не чіпає."""
 
     RECENT_QUERIES_LIMIT = 50
 

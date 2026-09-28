@@ -10,44 +10,68 @@ from typing import Any
 
 from app.application.dto import (
     AdventureCardDTO,
+    AuthorCardDTO,
+    CharacterCardDTO,
     MonsterCardDTO,
+    PlayStatisticsDTO,
     RateSettingDTO,
     RecommendationDTO,
-    SearchQueryDTO,
     SearchResultDTO,
 )
 from app.application.ports import (
     ConfigureRateUseCase,
     GetAdventureCardUseCase,
-    GetMonsterStatsUseCase,
+    GetAuthorCardUseCase,
+    GetCharacterCardUseCase,
+    GetMonsterCardUseCase,
+    GetPlayStatisticsUseCase,
     GetRecommendationsUseCase,
-    SearchAdventuresUseCase,
+    SearchUseCase,
 )
 
 
 class SearchController:
-    """`GET /api/search`."""
+    """`GET /api/search/adventures`, `/api/search/monsters`, `/api/search/encounters`.
 
-    def __init__(self, use_case: SearchAdventuresUseCase) -> None:
-        self._use_case = use_case
+    Три екземпляри одного порту `SearchUseCase` — по одному на вид пошуку.
+    """
 
-    async def search(self, params: dict[str, Any]) -> SearchResultDTO:
-        """Розбирає параметри, делегує сценарію, повертає DTO."""
+    def __init__(
+        self,
+        adventures: SearchUseCase,
+        monsters: SearchUseCase,
+        encounters: SearchUseCase,
+    ) -> None:
+        self._adventures = adventures
+        self._monsters = monsters
+        self._encounters = encounters
+
+    async def search_adventures(self, params: dict[str, Any]) -> SearchResultDTO:
+        raise NotImplementedError
+
+    async def search_monsters(self, params: dict[str, Any]) -> SearchResultDTO:
+        raise NotImplementedError
+
+    async def search_encounters(self, params: dict[str, Any]) -> SearchResultDTO:
         raise NotImplementedError
 
 
 class CardController:
-    """`GET /api/adventures/{id}`, `/api/monsters/{id}`, `/api/similar/{id}`."""
+    """Картки й навігація: пригода, монстр, персонаж, автор, схожі, ланцюжок кампанії."""
 
     def __init__(
         self,
-        adventure_use_case: GetAdventureCardUseCase,
-        monster_use_case: GetMonsterStatsUseCase,
-        recommendations_use_case: GetRecommendationsUseCase,
+        adventure_card: GetAdventureCardUseCase,
+        monster_card: GetMonsterCardUseCase,
+        character_card: GetCharacterCardUseCase,
+        author_card: GetAuthorCardUseCase,
+        recommendations: GetRecommendationsUseCase,
     ) -> None:
-        self._adventures = adventure_use_case
-        self._monsters = monster_use_case
-        self._recommendations = recommendations_use_case
+        self._adventure_card = adventure_card
+        self._monster_card = monster_card
+        self._character_card = character_card
+        self._author_card = author_card
+        self._recommendations = recommendations
 
     async def adventure(self, adventure_id: str) -> AdventureCardDTO:
         raise NotImplementedError
@@ -55,15 +79,34 @@ class CardController:
     async def monster(self, monster_id: str) -> MonsterCardDTO:
         raise NotImplementedError
 
+    async def character(self, character_id: str) -> CharacterCardDTO:
+        raise NotImplementedError
+
+    async def author(self, author_id: str) -> AuthorCardDTO:
+        raise NotImplementedError
+
     async def similar(self, adventure_id: str, limit: int = 10) -> list[RecommendationDTO]:
+        raise NotImplementedError
+
+    async def campaign(self, params: dict[str, Any]) -> list[RecommendationDTO]:
+        raise NotImplementedError
+
+
+class StatisticsController:
+    """`GET /api/play-stats` — статистика реальної гри."""
+
+    def __init__(self, play_statistics: GetPlayStatisticsUseCase) -> None:
+        self._play_statistics = play_statistics
+
+    async def play_stats(self, params: dict[str, Any]) -> PlayStatisticsDTO:
         raise NotImplementedError
 
 
 class AdminController:
-    """`POST /api/rate` — керування швидкістю зі слайдера інтерфейсу."""
+    """`GET/POST /api/rate` — керування швидкістю зі слайдера інтерфейсу."""
 
-    def __init__(self, use_case: ConfigureRateUseCase) -> None:
-        self._use_case = use_case
+    def __init__(self, configure_rate: ConfigureRateUseCase) -> None:
+        self._configure_rate = configure_rate
 
     async def set_rate(self, payload: dict[str, Any]) -> RateSettingDTO:
         raise NotImplementedError

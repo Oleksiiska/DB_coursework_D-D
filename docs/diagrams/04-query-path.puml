@@ -1,0 +1,102 @@
+@startuml 04-query-path
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam dpi 150
+skinparam defaultFontSize 12
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam ArrowColor #333333
+skinparam HeaderFontColor #777777
+skinparam HeaderFontSize 10
+hide empty members
+
+header
+станом на 28.09.2026 · побудовано з вихідного коду
+endheader
+
+left to right direction
+class CardController <<контролер>> #F1E0C0
+class SearchController <<контролер>> #F1E0C0
+class StatisticsController <<контролер>> #F1E0C0
+class StatsStream <<контролер>> #F1E0C0
+interface GetAdventureCardUseCase <<вхідний порт>> #E2D8F3
+interface GetAuthorCardUseCase <<вхідний порт>> #E2D8F3
+interface GetCharacterCardUseCase <<вхідний порт>> #E2D8F3
+interface GetLiveStatsUseCase <<вхідний порт>> #E2D8F3
+interface GetMonsterCardUseCase <<вхідний порт>> #E2D8F3
+interface GetPlayStatisticsUseCase <<вхідний порт>> #E2D8F3
+interface GetRecommendationsUseCase <<вхідний порт>> #E2D8F3
+interface SearchUseCase <<вхідний порт>> #E2D8F3
+abstract class CachedSearchHandler <<обробник>> #E2D8F3
+class GetAdventureCardHandler <<обробник>> #E2D8F3
+class GetAuthorCardHandler <<обробник>> #E2D8F3
+class GetCharacterCardHandler <<обробник>> #E2D8F3
+class GetLiveStatsHandler <<обробник>> #E2D8F3
+class GetMonsterCardHandler <<обробник>> #E2D8F3
+class GetPlayStatisticsHandler <<обробник>> #E2D8F3
+class GetRecommendationsHandler <<обробник>> #E2D8F3
+class SearchAdventuresHandler <<обробник>> #E2D8F3
+class SearchEncountersHandler <<обробник>> #E2D8F3
+class SearchMonstersHandler <<обробник>> #E2D8F3
+interface AdventureRepository <<вихідний порт>> #D2EADF
+interface CacheStore <<вихідний порт>> #D2EADF
+interface CharacterRepository <<вихідний порт>> #D2EADF
+interface CrudRepository <<вихідний порт>> #D2EADF
+interface EncounterRepository <<вихідний порт>> #D2EADF
+interface EventPublisher <<вихідний порт>> #D2EADF
+interface GraphRepository <<вихідний порт>> #D2EADF
+interface MetricsSink <<вихідний порт>> #D2EADF
+interface MonsterRepository <<вихідний порт>> #D2EADF
+interface SearchIndex <<вихідний порт>> #D2EADF
+class QueryNormalizer <<служба>> #D2EADF
+SearchUseCase <|.. CachedSearchHandler
+GetAdventureCardUseCase <|.. GetAdventureCardHandler
+GetAuthorCardUseCase <|.. GetAuthorCardHandler
+GetCharacterCardUseCase <|.. GetCharacterCardHandler
+GetLiveStatsUseCase <|.. GetLiveStatsHandler
+GetMonsterCardUseCase <|.. GetMonsterCardHandler
+GetPlayStatisticsUseCase <|.. GetPlayStatisticsHandler
+GetRecommendationsUseCase <|.. GetRecommendationsHandler
+CachedSearchHandler <|-- SearchAdventuresHandler
+CachedSearchHandler <|-- SearchEncountersHandler
+CachedSearchHandler <|-- SearchMonstersHandler
+CachedSearchHandler --> CacheStore
+CachedSearchHandler --> CrudRepository
+CachedSearchHandler --> MetricsSink
+CachedSearchHandler --> QueryNormalizer
+CachedSearchHandler --> SearchIndex
+CardController --> GetAdventureCardUseCase
+CardController --> GetAuthorCardUseCase
+CardController --> GetCharacterCardUseCase
+CardController --> GetMonsterCardUseCase
+CardController --> GetRecommendationsUseCase
+GetAdventureCardHandler --> AdventureRepository
+GetAdventureCardHandler --> CacheStore
+GetAuthorCardHandler --> AdventureRepository
+GetAuthorCardHandler --> CacheStore
+GetAuthorCardHandler --> CrudRepository : [Author]
+GetAuthorCardHandler --> GraphRepository
+GetCharacterCardHandler --> CacheStore
+GetCharacterCardHandler --> CharacterRepository
+GetLiveStatsHandler --> CacheStore
+GetLiveStatsHandler --> EventPublisher
+GetLiveStatsHandler --> MetricsSink
+GetMonsterCardHandler --> CacheStore
+GetMonsterCardHandler --> GraphRepository
+GetMonsterCardHandler --> MonsterRepository
+GetPlayStatisticsHandler --> CacheStore
+GetPlayStatisticsHandler --> CharacterRepository
+GetPlayStatisticsHandler --> EncounterRepository
+GetPlayStatisticsHandler --> MonsterRepository
+GetRecommendationsHandler --> AdventureRepository
+GetRecommendationsHandler --> CacheStore
+GetRecommendationsHandler --> GraphRepository
+SearchController --> "3" SearchUseCase : adventures\nmonsters\nencounters
+StatisticsController --> GetPlayStatisticsUseCase
+StatsStream --> GetLiveStatsUseCase
+legend right
+<back:#F1E0C0>      </back>  presentation — подання
+<back:#E2D8F3>      </back>  application — сценарії
+<back:#D2EADF>      </back>  domain — предметна область
+endlegend
+@enduml

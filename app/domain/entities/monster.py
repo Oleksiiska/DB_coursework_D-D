@@ -1,5 +1,5 @@
 """Сутність «Монстр» — довідник і єдиний міст між каталогом
-і практикою гри.
+і практикою гри (п. 2.4, додаток А, таблиці А.7–А.8).
 """
 
 from __future__ import annotations
@@ -21,7 +21,8 @@ class Ability:
 class StatBlock:
     """Корисне навантаження: бойові характеристики.
 
-    Зберігається єдиним вкладеним об'єктом і в запитах участі не бере. Показується у картці.
+    Зберігається єдиним вкладеним об'єктом і в запитах участі не бере
+    (додаток А, таблиця А.8). Показується у картці.
     """
 
     armor_class: int | None = None
@@ -72,7 +73,7 @@ class Monster:
     statblock: StatBlock = field(default_factory=StatBlock)
 
     def validate(self) -> list[str]:
-        """Обов'язкові: name, type, challenge_rating."""
+        """Обов'язкові: name, type, challenge_rating (п. 2.11, правило 3)."""
         raise NotImplementedError
 
     def suits_party_level(self, level: int, party_size: int) -> bool:
@@ -83,6 +84,6 @@ class Monster:
         """Склейка текстів здібностей для пошукового індексу.
 
         Забезпечує запит «знайти монстра за описом здібності» без
-        винесення кожної здібності в окреме поле.
+        винесення кожної здібності в окреме поле (додаток А, таблиця А.7).
         """
         raise NotImplementedError

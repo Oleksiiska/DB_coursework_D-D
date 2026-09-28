@@ -8,9 +8,15 @@ from __future__ import annotations
 
 from typing import Any, AsyncIterator, Sequence
 
+from app.domain.values import QueuedBatch
+
 
 class QueueAdapter:
-    """Реалізує порт `EventPublisher`."""
+    """Реалізує два порти: `EventPublisher` і `EventConsumer`.
+
+    Один адаптер — два вузькі контракти: джерела бачать лише публікацію,
+    процес запису — лише читання.
+    """
 
     TOPIC_DOCUMENTS = "documents"
 
@@ -24,6 +30,8 @@ class QueueAdapter:
         """Глибина черги робить вузьке місце вимірюваним."""
         raise NotImplementedError
 
-    async def consume(self, topic: str, batch_size: int = 500) -> AsyncIterator[list[dict]]:
-        """Споживання пакетами — використовується процесом запису."""
+    async def consume(self, topic: str, batch_size: int = 500) -> AsyncIterator[QueuedBatch]:
+        raise NotImplementedError
+
+    async def acknowledge(self, topic: str, batch_id: str) -> None:
         raise NotImplementedError

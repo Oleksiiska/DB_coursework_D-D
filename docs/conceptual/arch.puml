@@ -1,0 +1,361 @@
+' ============================================================
+'  Архітектура застосунку: Layered + Hexagonal + CQRS
+'  Концептуальні схеми розділу 3 (станом на 28.09.2026):
+'  рисунки 3.1–3.4, 3.11, 3.12.
+'  Схеми модулів і класів (рисунки 3.5–3.10) будуються з коду:
+'    python tools/arch_diagrams.py --out docs/diagrams --plantuml plantuml.jar
+'  Рендеринг: java -jar plantuml.jar -tpng -charset UTF-8 arch.puml
+' ============================================================
+
+' ------------------------------------------------------------
+'  Рисунок 3.1. Шарова архітектура: напрямок залежностей
+' ------------------------------------------------------------
+@startuml arch-01-layers
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam dpi 150
+skinparam componentStyle rectangle
+skinparam defaultFontSize 12
+skinparam nodesep 30
+skinparam ranksep 45
+
+package "1. Presentation — подання" #F8F4EC {
+  component "Статичний фронтенд" as C3
+  component "REST-контролери" as C1
+  component "SSE-потік статистики" as C2
+}
+
+package "2. Application — сценарії" #F2EEF6 {
+  component "Вхідні порти" as C8a
+  component "Команди (Command)" as C4
+  component "Запити (Query)" as C5
+  component "Об'єкти передачі даних" as C6
+}
+
+package "3. Domain — предметна область" as DOM #EDF4F2 {
+  component "Доменні служби" as C9
+  component "Вихідні порти" as C8
+  component "Сутності та значення" as C7
+}
+
+package "4. Infrastructure — інфраструктура" #F4F4F4 {
+  component "Адаптери сховищ" as C10
+  component "Адаптери джерел" as C11
+  component "Черга повідомлень,\nжурнал якості даних" as C12
+}
+
+C3 -right-> C1 : HTTP
+C1 --> C8a
+C2 --> C8a
+C8a <|.. C4 : реалізують
+C8a <|.. C5
+C8a -right-> C6
+C4 --> C8
+C5 --> C8
+C4 --> C9
+C5 --> C7
+C8 <|.. C10 : реалізують
+C8 <|.. C11
+C8 <|.. C12
+
+note right of DOM
+  Домен не залежить ні від чого:
+  ані від бази, ані від фреймворку.
+  Інфраструктура залежить від домену
+  (стрілки реалізації спрямовані вгору)
+end note
+
+@enduml
+
+
+' ------------------------------------------------------------
+'  Рисунок 3.2. Порти та адаптери
+' ------------------------------------------------------------
+@startuml arch-02-hexagon
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam dpi 150
+skinparam componentStyle rectangle
+skinparam defaultFontSize 12
+skinparam nodesep 18
+skinparam ranksep 40
+left to right direction
+
+package "Ведучі адаптери (driving)" #F8F4EC {
+  component "REST-контролери\n<size:10>Search, Card,</size>\n<size:10>Statistics, Admin</size>" as D1
+  component "Потік статистики\n<size:10>StatsStream</size>" as D2
+  component "Процес запису\n<size:10>IngestWorker</size>" as D3
+}
+
+package "Вхідні порти — 10" #FFF8E7 {
+  component "SearchUseCase\n<size:10>шаблон і три нащадки:</size>\n<size:10>пригоди, монстри, зустрічі</size>" as P1
+  component "GetAdventureCard\nGetMonsterCard\nGetCharacterCard\nGetAuthorCard\nGetRecommendations\nGetPlayStatistics\nGetLiveStats" as P2
+  component "IngestDocument\nConfigureRate" as P3
+}
+
+package "ЯДРО" #EDF4F2 {
+  component "Сценарії використання\n<size:10>12 обробників</size>" as CORE
+  component "Сутності\nта значення" as ENT
+  component "Доменні служби\n<size:10>нормалізація, валідація,</size>\n<size:10>ключ розподілу, класифікація</size>" as SRV
+}
+
+package "Вихідні порти — 13" #FFF8E7 {
+  component "CrudRepository\n<size:10>Adventure, Monster, Character,</size>\n<size:10>Encounter — спеціалізації</size>" as Q1
+  component "SearchIndex\nGraphRepository" as Q2
+  component "CacheStore\nMetricsSink" as Q3
+  component "DocumentSource\nEventPublisher\nEventConsumer" as Q4
+  component "DataQualityLog" as Q5
+}
+
+package "Ведені адаптери (driven)" #F2EEF6 {
+  component "Mongo*Repository\n<size:10>узагальнений + 4 спеціалізовані</size>" as A1
+  component "SearchIndexAdapter\nGraphAdapter" as A2
+  component "RedisCacheAdapter\nRedisMetricsAdapter" as A3
+  component "CsvSource\nGeneratorSource\nCrawlerSource\nQueueAdapter" as A4
+  component "FileDataQualityLog" as A5
+}
+
+D1 --> P1
+D1 --> P2
+D1 --> P3
+D2 --> P2
+D3 --> P3
+
+P1 --> CORE
+P2 --> CORE
+P3 --> CORE
+CORE --> ENT
+CORE --> SRV
+
+CORE --> Q1
+CORE --> Q2
+CORE --> Q3
+CORE --> Q4
+CORE --> Q5
+
+Q1 <|.. A1
+Q2 <|.. A2
+Q3 <|.. A3
+Q4 <|.. A4
+Q5 <|.. A5
+
+note bottom of CORE
+  Ядро не імпортує жодного
+  драйвера БД і жодного
+  веб-фреймворку
+end note
+
+@enduml
+
+
+' ------------------------------------------------------------
+'  Рисунок 3.3. CQRS: шлях команд і шлях запитів
+' ------------------------------------------------------------
+@startuml arch-03-cqrs
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam dpi 150
+skinparam componentStyle rectangle
+skinparam defaultFontSize 12
+
+package "ШЛЯХ КОМАНД (write)" #F8F4EC {
+  component "IngestDocument\nHandler" as W1
+  component "Валідація\nта трансформації" as W2
+  component "Обчислення\nключа розподілу" as W3
+  component "Пакетний запис" as W4
+}
+
+package "ШЛЯХ ЗАПИТІВ (read)" #F2EEF6 {
+  component "SearchAdventures\nHandler" as R1
+  component "Нормалізація\nзапиту" as R2
+  component "Читання картки\nза ключем" as R3
+  component "Обхід графа" as R4
+}
+
+database "Документне\nсховище" as DB1
+database "Пошуковий\nіндекс" as DB2
+database "Граф" as DB3
+database "Кеш" as DB4
+
+W1 --> W2
+W2 --> W3
+W3 --> W4
+W4 --> DB1
+W4 --> DB2
+W4 --> DB3
+
+R1 --> R2
+R2 --> DB4 : спершу кеш
+R2 --> DB2 : промах
+R3 --> DB1
+R4 --> DB3
+R1 ..> DB4 : запис результату
+
+note bottom
+  Моделі різні: команда працює
+  з повним документом, запит —
+  зі зрізом під конкретну видачу
+end note
+
+@enduml
+
+
+' ------------------------------------------------------------
+'  Рисунок 3.4. Процеси та їх взаємодія
+' ------------------------------------------------------------
+@startuml arch-04-processes
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam dpi 150
+skinparam componentStyle rectangle
+skinparam defaultFontSize 12
+
+node "Браузер" as BR {
+  component "Панель\nмоніторингу" as UI
+}
+
+node "Процес: API" as N1 {
+  component "REST + SSE" as API
+  component "Обробники запитів" as QH
+}
+
+node "Процес: CsvLoader" as N5 {
+  component "Читання CSV\nіз заданою швидкістю" as CSV
+}
+
+node "Процес: Generator" as N2 {
+  component "Генератор\nдокументів" as GEN
+}
+
+node "Процес: Crawler" as N3 {
+  component "Краулер\n(бонус)" as CRW
+}
+
+node "Процес: IngestWorker" as N4 {
+  component "Споживач черги" as IW
+  component "IngestDocumentHandler" as BW
+}
+
+queue "Черга повідомлень" as MQ
+database "Сховища" as DB
+database "Кеш і лічильники" as RD
+
+UI --> API : HTTP
+API --> UI : SSE, раз на секунду
+API --> RD : швидкість генерації
+GEN --> RD : читає цільову швидкість
+CSV --> MQ : EventPublisher
+GEN --> MQ : EventPublisher
+CRW --> MQ : EventPublisher
+MQ --> IW : EventConsumer
+IW --> BW
+BW --> DB
+BW --> RD : лічильники
+QH --> DB
+QH --> RD
+
+note right of MQ
+  Черга розв'язує швидкості:
+  джерела можуть випереджати
+  сховище, не втрачаючи даних
+end note
+
+note bottom of N2
+  Окремий процес обходить
+  обмеження GIL для
+  CPU-bound генерації
+end note
+
+@enduml
+
+
+' ------------------------------------------------------------
+'  Рисунок 3.11. Обробка пошукового запиту
+' ------------------------------------------------------------
+@startuml arch-06-sequence-read
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam dpi 150
+skinparam defaultFontSize 12
+hide footbox
+
+actor Користувач as U
+participant "SearchController" as C
+participant "SearchAdventuresHandler\n<size:10>(шаблон CachedSearchHandler)</size>" as H
+participant "QueryNormalizer" as N
+participant "CacheStore" as K
+participant "SearchIndex" as S
+participant "CrudRepository\n<size:10>[Adventure]</size>" as D
+participant "MetricsSink" as M
+
+U -> C : GET /api/search/adventures?q=...
+C -> H : handle(SearchQueryDTO)
+H -> H : перевірка типу фільтрів
+H -> N : cache_key(kind, raw, spec)
+N --> H : ключ кешу
+
+H -> K : get(key)
+alt влучання в кеш
+  K --> H : готовий результат
+else промах
+  K --> H : порожньо
+  H -> S : search(text, spec, page, sort)
+  S --> H : SearchHits: ідентифікатори й фрагменти
+  H -> D : get_many(ids)
+  D --> H : сутності в порядку видачі
+  H -> H : _to_card() для кожної сутності
+  H -> K : set(key, result, ttl)
+end
+H -> M : record_query(SearchLogEntry)
+H --> C : SearchResultDTO
+C --> U : JSON
+
+@enduml
+
+
+' ------------------------------------------------------------
+'  Рисунок 3.12. Запис документа від джерела до сховищ
+' ------------------------------------------------------------
+@startuml arch-07-sequence-write
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam dpi 150
+skinparam defaultFontSize 12
+hide footbox
+
+participant "Процес-джерело\n<size:10>CsvLoader, GeneratorWorker,</size>\n<size:10>CrawlerWorker</size>" as SRC
+queue "Черга" as Q
+participant "IngestWorker" as W
+participant "IngestDocumentHandler" as H
+participant "Доменні служби\n<size:10>DocumentValidator,</size>\n<size:10>ShardKeyService</size>" as DS
+participant "Сховища\n<size:10>через вихідні порти</size>" as ST
+participant "DataQualityLog" as QL
+participant "MetricsSink" as M
+
+SRC -> SRC : пакет із stream()\n<size:10>DocumentSource</size>
+SRC -> Q : publish(topic, batch)\n<size:10>EventPublisher</size>
+W -> Q : consume(topic)\n<size:10>EventConsumer</size>
+Q --> W : QueuedBatch\n<size:10>batch_id і документи</size>
+W -> H : handle(documents, source)
+H -> H : групування\nза DocumentKind
+loop для кожного документа
+  H -> DS : check(kind, doc)
+  alt документ валідний
+    DS --> H : порушень немає
+    H -> H : трансформації,\nобчислювані поля
+    H -> DS : shard_key(doc_id)
+    DS --> H : ключ розподілу
+  else брак
+    DS --> H : перелік порушень
+    H -> QL : rejected(doc, reasons)
+  end
+end
+note over H, ST : пакетний паралельний запис у три сховища
+H -> ST : CrudRepository.add_many(валідні)
+H -> ST : SearchIndex.index_many(валідні)\n<size:10>лише пригоди, монстри, зустрічі</size>
+H -> ST : GraphRepository\n.merge_nodes_and_edges(валідні)
+H -> M : inc(saved), inc(rejected)
+H --> W : IngestReport
+W -> Q : acknowledge(topic, batch_id)
+
+@enduml

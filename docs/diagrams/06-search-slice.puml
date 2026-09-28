@@ -1,0 +1,111 @@
+@startuml 06-search-slice
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam dpi 150
+skinparam defaultFontSize 12
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam ArrowColor #333333
+skinparam HeaderFontColor #777777
+skinparam HeaderFontSize 10
+hide empty members
+
+header
+станом на 28.09.2026 · побудовано з вихідного коду
+endheader
+
+left to right direction
+class SearchController <<контролер>> #F1E0C0
+class AdventureCardDTO <<DTO>> #E2D8F3
+class SearchQueryDTO <<DTO>> #E2D8F3 {
+  +raw_text: str
+  +filters: SearchSpecification
+  +page: Page
+  +sort: SortOrder
+  --
+  +from_request(params): SearchQueryDTO
+}
+class SearchResultDTO <<DTO>> #E2D8F3 {
+  +items: list[TCard]
+  +total: int
+  +page: int
+  +page_size: int
+  +cache_hit: bool
+  +latency_ms: int
+  +normalized_query: str
+}
+interface SearchUseCase <<вхідний порт>> #E2D8F3 {
+  +handle(query): SearchResultDTO
+}
+abstract class CachedSearchHandler <<обробник>> #E2D8F3 {
+  -index: SearchIndex
+  -repository: CrudRepository[TEntity]
+  -cache: CacheStore
+  -metrics: MetricsSink
+  -normalizer: QueryNormalizer
+  --
+  +handle(query): SearchResultDTO[TCard]
+  {abstract} #_to_card(entity, snippets): TCard
+}
+class SearchAdventuresHandler <<обробник>> #E2D8F3
+interface CacheStore <<вихідний порт>> #D2EADF {
+  +get(key): bytes | None
+  +set(key, value, ttl_seconds)
+  +delete(key): bool
+  +incr(key, amount): int
+  +push_capped(key, value, max_length)
+}
+interface CrudRepository <<вихідний порт>> #D2EADF {
+  +get(entity_id): T | None
+  +get_many(entity_ids): list[T]
+  +add(entity)
+  +add_many(entities): int
+  +update(entity): bool
+  +delete(entity_id): bool
+  +count(spec): int
+}
+interface MetricsSink <<вихідний порт>> #D2EADF {
+  +record_query(entry)
+  +inc(counter, amount)
+  +observe_latency(operation, milliseconds)
+  +snapshot(): dict
+}
+interface SearchIndex <<вихідний порт>> #D2EADF {
+  +search(text, spec, page, sort): SearchHits
+  +index_many(documents): int
+  +delete(document_id): bool
+}
+class QueryNormalizer <<служба>> #D2EADF {
+  +normalize(raw): str
+  +cache_key(kind, raw, spec): str
+  +is_empty(raw): bool
+}
+class MongoCrudRepository <<адаптер>> #E1E1E1
+class RedisCacheAdapter <<адаптер>> #E1E1E1
+class RedisMetricsAdapter <<адаптер>> #E1E1E1
+class SearchIndexAdapter <<адаптер>> #E1E1E1
+SearchUseCase <|.. CachedSearchHandler
+CrudRepository <|.. MongoCrudRepository
+CacheStore <|.. RedisCacheAdapter
+MetricsSink <|.. RedisMetricsAdapter
+SearchIndex <|.. SearchIndexAdapter
+CachedSearchHandler <|-- SearchAdventuresHandler
+CachedSearchHandler --> CacheStore
+CachedSearchHandler --> CrudRepository
+CachedSearchHandler --> MetricsSink
+CachedSearchHandler --> QueryNormalizer
+CachedSearchHandler --> SearchIndex
+SearchController --> "3" SearchUseCase : adventures\nmonsters\nencounters
+CachedSearchHandler ..> SearchQueryDTO
+CachedSearchHandler ..> SearchResultDTO
+SearchAdventuresHandler ..> AdventureCardDTO
+SearchController ..> SearchResultDTO
+SearchUseCase ..> SearchQueryDTO
+SearchUseCase ..> SearchResultDTO
+legend right
+<back:#F1E0C0>      </back>  presentation — подання
+<back:#E2D8F3>      </back>  application — сценарії
+<back:#D2EADF>      </back>  domain — предметна область
+<back:#E1E1E1>      </back>  infrastructure — адаптери
+endlegend
+@enduml

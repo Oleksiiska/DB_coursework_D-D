@@ -1,7 +1,3 @@
-from app.infrastructure.observability.logging import (
-    LoggingConfigurator,
-    RejectedDocumentLog,
-    UnknownTermLog,
-)
+from app.infrastructure.observability.logging import FileDataQualityLog, LoggingConfigurator
 
-__all__ = ["LoggingConfigurator", "RejectedDocumentLog", "UnknownTermLog"]
+__all__ = ["FileDataQualityLog", "LoggingConfigurator"]

@@ -1,0 +1,68 @@
+@startuml 05-command-path
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam dpi 150
+skinparam defaultFontSize 12
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam ArrowColor #333333
+skinparam HeaderFontColor #777777
+skinparam HeaderFontSize 10
+hide empty members
+
+header
+станом на 28.09.2026 · побудовано з вихідного коду
+endheader
+
+left to right direction
+class CrawlerWorker <<процес>> #FCE9B8
+class CsvLoader <<процес>> #FCE9B8
+class GeneratorWorker <<процес>> #FCE9B8
+class IngestWorker <<процес>> #FCE9B8
+class AdminController <<контролер>> #F1E0C0
+class ConfigureRateHandler <<обробник>> #E2D8F3
+class IngestDocumentHandler <<обробник>> #E2D8F3
+interface ConfigureRateUseCase <<вхідний порт>> #E2D8F3
+interface IngestDocumentUseCase <<вхідний порт>> #E2D8F3
+interface CacheStore <<вихідний порт>> #D2EADF
+interface CrudRepository <<вихідний порт>> #D2EADF
+interface DataQualityLog <<вихідний порт>> #D2EADF
+interface DocumentSource <<вихідний порт>> #D2EADF
+interface EventConsumer <<вихідний порт>> #D2EADF
+interface EventPublisher <<вихідний порт>> #D2EADF
+interface GraphRepository <<вихідний порт>> #D2EADF
+interface MetricsSink <<вихідний порт>> #D2EADF
+interface SearchIndex <<вихідний порт>> #D2EADF
+class DocumentValidator <<служба>> #D2EADF
+class EnvironmentClassifier <<служба>> #D2EADF
+class ShardKeyService <<служба>> #D2EADF
+class VocabularyNormalizer <<служба>> #D2EADF
+ConfigureRateUseCase <|.. ConfigureRateHandler
+IngestDocumentUseCase <|.. IngestDocumentHandler
+AdminController --> ConfigureRateUseCase
+ConfigureRateHandler --> CacheStore
+CrawlerWorker --> DocumentSource
+CrawlerWorker --> EventPublisher
+CsvLoader --> "*" DocumentSource : реєстр
+CsvLoader --> EventPublisher
+GeneratorWorker --> CacheStore
+GeneratorWorker --> DocumentSource
+GeneratorWorker --> EventPublisher
+IngestDocumentHandler --> "*" CrudRepository : реєстр
+IngestDocumentHandler --> DataQualityLog
+IngestDocumentHandler --> DocumentValidator
+IngestDocumentHandler --> EnvironmentClassifier
+IngestDocumentHandler --> GraphRepository
+IngestDocumentHandler --> MetricsSink
+IngestDocumentHandler --> "*" SearchIndex : реєстр
+IngestDocumentHandler --> ShardKeyService
+IngestDocumentHandler --> VocabularyNormalizer
+IngestWorker --> EventConsumer
+IngestWorker --> IngestDocumentUseCase
+legend right
+<back:#FCE9B8>      </back>  процеси
+<back:#F1E0C0>      </back>  presentation — подання
+<back:#E2D8F3>      </back>  application — сценарії
+<back:#D2EADF>      </back>  domain — предметна область
+endlegend
+@enduml

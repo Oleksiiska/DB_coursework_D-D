@@ -1,4 +1,4 @@
-"""Службова сутність: журнал пошукових запитів.
+"""Службова сутність: журнал пошукових запитів (додаток А, таблиця А.12).
 
 Живить панель моніторингу: останні запити, статус, влучання в кеш.
 """
@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from app.domain.values import Filters, QueryStatus
+from app.domain.values import DocumentKind, QueryStatus
 
 
 @dataclass(slots=True)
@@ -17,7 +17,8 @@ class SearchLogEntry:
     raw_query: str
     normalized_query: str
     created_at: datetime
-    filters: Filters = field(default_factory=Filters)
+    kind: DocumentKind = DocumentKind.ADVENTURE
+    filters: dict[str, object] = field(default_factory=dict)
     results_count: int = 0
     status: QueryStatus = QueryStatus.EMPTY
     latency_ms: int = 0

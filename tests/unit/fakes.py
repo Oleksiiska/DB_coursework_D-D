@@ -6,47 +6,68 @@
 
 from __future__ import annotations
 
-from typing import AsyncIterator, Sequence
+from typing import AsyncIterator, Generic, Sequence, TypeVar
 
 from app.domain.entities import Adventure, SearchLogEntry
-from app.domain.values import Filters, Page, ShardKey, Snippet
+from app.domain.values import (
+    AdventureFilters,
+    DocumentKind,
+    Page,
+    QueuedBatch,
+    SearchHits,
+    SearchSpecification,
+    SortOrder,
+)
+
+T = TypeVar("T")
 
 
-class InMemoryAdventureRepository:
-    """Задовольняє контракт `AdventureRepository` без успадкування."""
+class InMemoryRepository(Generic[T]):
+    """Задовольняє контракт `CrudRepository` без успадкування."""
 
-    def __init__(self, items: list[Adventure] | None = None) -> None:
-        self._items: dict[str, Adventure] = {a.adventure_id: a for a in (items or [])}
+    def __init__(self, id_field: str, items: list[T] | None = None) -> None:
+        self._id_field = id_field
+        self._items: dict[str, T] = {getattr(i, id_field): i for i in (items or [])}
         self.calls: list[str] = []
 
-    async def get(self, entity_id: str) -> Adventure | None:
+    async def get(self, entity_id: str) -> T | None:
         self.calls.append("get")
         return self._items.get(entity_id)
 
-    async def get_many(self, entity_ids: Sequence[str]) -> list[Adventure]:
+    async def get_many(self, entity_ids: Sequence[str]) -> list[T]:
         self.calls.append("get_many")
         return [self._items[i] for i in entity_ids if i in self._items]
 
-    async def add(self, entity: Adventure) -> None:
-        self._items[entity.adventure_id] = entity
+    async def add(self, entity: T) -> None:
+        self._items[getattr(entity, self._id_field)] = entity
 
-    async def add_many(self, entities: Sequence[Adventure]) -> int:
+    async def add_many(self, entities: Sequence[T]) -> int:
         for entity in entities:
-            self._items[entity.adventure_id] = entity
+            await self.add(entity)
         return len(entities)
 
-    async def update(self, entity: Adventure) -> bool:
-        existed = entity.adventure_id in self._items
-        self._items[entity.adventure_id] = entity
+    async def update(self, entity: T) -> bool:
+        key = getattr(entity, self._id_field)
+        existed = key in self._items
+        self._items[key] = entity
         return existed
 
     async def delete(self, entity_id: str) -> bool:
         return self._items.pop(entity_id, None) is not None
 
-    async def count(self, filters: Filters | None = None) -> int:
+    async def count(self, spec: SearchSpecification | None = None) -> int:
         return len(self._items)
 
-    async def find_by_filters(self, filters: Filters, page: Page) -> list[Adventure]:
+
+class InMemoryAdventureRepository(InMemoryRepository[Adventure]):
+    """Задовольняє контракт `AdventureRepository`."""
+
+    def __init__(self, items: list[Adventure] | None = None) -> None:
+        super().__init__("adventure_id", items)
+
+    async def find_by_filters(
+        self, filters: AdventureFilters, page: Page, sort: SortOrder = SortOrder.RELEVANCE
+    ) -> list[Adventure]:
         return list(self._items.values())
 
     async def find_by_author(self, author_id: str) -> list[Adventure]:
@@ -58,13 +79,12 @@ class InMemoryAdventureRepository:
 
 class FakeSearchIndex:
     def __init__(self, ids: list[str] | None = None) -> None:
-        self._ids = ids or []
+        self._ids = tuple(ids or [])
         self.queries: list[str] = []
 
-    async def search(self, text, filters, page):
+    async def search(self, text, spec, page, sort=SortOrder.RELEVANCE) -> SearchHits:
         self.queries.append(text)
-        snippets: dict[str, list[Snippet]] = {}
-        return self._ids, snippets, len(self._ids)
+        return SearchHits(ids=self._ids, total=len(self._ids))
 
     async def index_many(self, documents: Sequence[dict]) -> int:
         return len(documents)
@@ -76,16 +96,9 @@ class FakeSearchIndex:
 class FakeCacheStore:
     def __init__(self) -> None:
         self.store: dict[str, bytes] = {}
-        self.hits = 0
-        self.misses = 0
 
     async def get(self, key: str) -> bytes | None:
-        value = self.store.get(key)
-        if value is None:
-            self.misses += 1
-        else:
-            self.hits += 1
-        return value
+        return self.store.get(key)
 
     async def set(self, key: str, value: bytes, ttl_seconds: int | None = None) -> None:
         self.store[key] = value
@@ -94,8 +107,7 @@ class FakeCacheStore:
         return self.store.pop(key, None) is not None
 
     async def incr(self, key: str, amount: int = 1) -> int:
-        current = int(self.store.get(key, b"0"))
-        current += amount
+        current = int(self.store.get(key, b"0")) + amount
         self.store[key] = str(current).encode()
         return current
 
@@ -141,15 +153,37 @@ class FakeGraphRepository:
         return len(batch)
 
 
-class FakeEventPublisher:
+class FakeQueue:
+    """Задовольняє обидва порти черги: `EventPublisher` і `EventConsumer`."""
+
     def __init__(self) -> None:
         self.published: list[dict] = []
+        self.acknowledged: list[str] = []
 
     async def publish(self, topic: str, batch: Sequence[dict]) -> None:
         self.published.extend(batch)
 
     async def queue_depth(self, topic: str) -> int:
         return len(self.published)
+
+    async def consume(self, topic: str, batch_size: int = 500) -> AsyncIterator[QueuedBatch]:
+        for number, start in enumerate(range(0, len(self.published), batch_size)):
+            yield QueuedBatch(batch_id=str(number), documents=self.published[start : start + batch_size])
+
+    async def acknowledge(self, topic: str, batch_id: str) -> None:
+        self.acknowledged.append(batch_id)
+
+
+class FakeDataQualityLog:
+    def __init__(self) -> None:
+        self.rejected_documents: list[tuple[dict, list[str]]] = []
+        self.unknown_terms: list[tuple[str, str]] = []
+
+    async def rejected(self, document: dict, reasons: list[str]) -> None:
+        self.rejected_documents.append((document, reasons))
+
+    async def unknown_term(self, vocabulary: str, term: str) -> None:
+        self.unknown_terms.append((vocabulary, term))
 
 
 class ListSource:
@@ -171,6 +205,10 @@ class ListSource:
         pass
 
 
-class FixedShardKeyProvider:
-    def shard_key(self, entity_id: str) -> ShardKey:
-        return ShardKey(value=entity_id, shard_index=0)
+def repository_registry() -> dict[DocumentKind, InMemoryRepository]:
+    """Реєстр репозиторіїв на кожен вид документа."""
+    registry: dict[DocumentKind, InMemoryRepository] = {
+        kind: InMemoryRepository(f"{kind.value}_id") for kind in DocumentKind
+    }
+    registry[DocumentKind.ADVENTURE] = InMemoryAdventureRepository()
+    return registry

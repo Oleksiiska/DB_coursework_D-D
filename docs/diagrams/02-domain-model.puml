@@ -1,0 +1,79 @@
+@startuml 02-domain-model
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam dpi 150
+skinparam defaultFontSize 12
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam ArrowColor #333333
+skinparam HeaderFontColor #777777
+skinparam HeaderFontSize 10
+hide empty members
+
+header
+станом на 28.09.2026 · побудовано з вихідного коду
+endheader
+
+left to right direction
+package "domain — предметна область" #EDF4F2 {
+class Ability <<вкладене>>
+class Adventure <<сутність>>
+class Author <<сутність>>
+class ClassLevel <<вкладене>>
+class CombatPayload <<вкладене>>
+class Encounter <<сутність>>
+class HitPoints <<вкладене>>
+class Monster <<сутність>>
+class MonsterParticipation <<асоціативний клас>>
+class PlayerCharacter <<сутність>>
+class Review <<вкладене>>
+class SearchLogEntry <<сутність>>
+class Setting <<сутність>>
+class StatBlock <<вкладене>>
+class Tag <<сутність>>
+enum DocumentKind <<перелік>>
+enum HpStatus <<перелік>>
+class LevelRange <<значення>>
+class Money <<значення>>
+class PartySize <<значення>>
+class Provenance <<значення>>
+enum QueryStatus <<перелік>>
+enum SourceOrigin <<перелік>>
+enum TagCategory <<перелік>>
+}
+Adventure *-- "1" LevelRange
+Adventure *-- "1" Money
+Adventure *-- "1" PartySize
+Adventure *-- "1" Provenance
+Adventure *-- "*" Review
+Author *-- "1" Provenance
+Encounter *-- "1" Provenance
+Monster *-- "1" Provenance
+Monster *-- "1" StatBlock
+MonsterParticipation *-- "1" HitPoints
+PlayerCharacter *-- "*" ClassLevel
+PlayerCharacter *-- "1" CombatPayload
+PlayerCharacter *-- "1" HitPoints
+PlayerCharacter *-- "1" Provenance
+StatBlock *-- "*" Ability
+HitPoints --> "0..1" HpStatus
+Provenance --> "1" SourceOrigin
+SearchLogEntry --> "1" DocumentKind
+SearchLogEntry --> "1" QueryStatus
+Tag --> "0..1" TagCategory
+Adventure --> "0..1" Adventure : prev_adventure_id\nnext_adventure_id
+Adventure --> "*" Author : author_ids
+Adventure --> "*" Monster : monster_ids
+Adventure --> "0..1" Setting : setting_id
+Adventure --> "*" Tag : tags
+Author --> "*" Author : co_author_ids
+Encounter --> "*" PlayerCharacter : player_character_ids
+MonsterParticipation --> "1" Encounter : encounter_id
+MonsterParticipation --> "0..1" Monster : monster_id
+PlayerCharacter --> "*" Encounter : encounter_ids
+Setting --> "*" Setting : related_setting_ids
+legend right
+  ◆──  композиція (вкладений об'єкт)
+  ──>  посилання за ключем (підпис — назва поля) або тип-перелік
+endlegend
+@enduml

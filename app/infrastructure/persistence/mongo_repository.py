@@ -1,25 +1,51 @@
 """Адаптери документного сховища.
 
-Реалізують порти CRUD-репозиторіїв. Жоден із цих класів не
-імпортується доменним шаром: зв'язок встановлює композиційний корінь.
+Реалізують порти репозиторіїв. Жоден із цих класів не імпортується
+доменним шаром: зв'язок встановлює композиційний корінь.
 """
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from typing import Any, Generic, Sequence, TypeVar
 
 from app.domain.entities import Adventure, Encounter, Monster, PlayerCharacter
-from app.domain.values import Filters, Page
+from app.domain.values import (
+    AdventureFilters,
+    MonsterFilters,
+    Page,
+    SearchSpecification,
+    SortOrder,
+)
 
 T = TypeVar("T")
 
 
-class DocumentMapper(Generic[T]):
+class DocumentMapper(ABC, Generic[T]):
     """Відображення документа сховища в сутність і навпаки.
 
-    Винесено окремо, щоб адаптер репозиторію лишався однаковим
+    Винесено окремо від репозиторію, щоб адаптер лишався однаковим
     для всіх колекцій.
     """
+
+    @abstractmethod
+    def to_entity(self, document: dict[str, Any]) -> T:
+        ...
+
+    @abstractmethod
+    def to_document(self, entity: T) -> dict[str, Any]:
+        ...
+
+
+class DataclassDocumentMapper(DocumentMapper[T]):
+    """Універсальне відображення для сутностей-датакласів.
+
+    Один клас обслуговує всі вісім колекцій: вкладені датакласи
+    (відгуки, статблок, участь монстрів) розгортаються рекурсивно.
+    """
+
+    def __init__(self, entity_type: type[T]) -> None:
+        self._entity_type = entity_type
 
     def to_entity(self, document: dict[str, Any]) -> T:
         raise NotImplementedError
@@ -31,8 +57,9 @@ class DocumentMapper(Generic[T]):
 class MongoCrudRepository(Generic[T]):
     """Узагальнена реалізація CRUD поверх документного сховища.
 
-    Параметризується назвою колекції та відображенням, тому конкретні
-    репозиторії додають лише специфічні запити.
+    Параметризується назвою колекції та відображенням. Автори, теги,
+    ігрові світи й записи участі монстрів обслуговуються цим класом
+    без підкласів; решта колекцій додає лише специфічні запити.
     """
 
     def __init__(self, client: Any, collection: str, mapper: DocumentMapper[T]) -> None:
@@ -61,10 +88,10 @@ class MongoCrudRepository(Generic[T]):
     async def delete(self, entity_id: str) -> bool:
         raise NotImplementedError
 
-    async def count(self, filters: Filters | None = None) -> int:
+    async def count(self, spec: SearchSpecification | None = None) -> int:
         raise NotImplementedError
 
-    def _build_query(self, filters: Filters) -> dict[str, Any]:
+    def _build_query(self, spec: SearchSpecification) -> dict[str, Any]:
         """Переклад доменної специфікації у мову запитів сховища."""
         raise NotImplementedError
 
@@ -74,7 +101,9 @@ class MongoAdventureRepository(MongoCrudRepository[Adventure]):
 
     COLLECTION = "adventures"
 
-    async def find_by_filters(self, filters: Filters, page: Page) -> list[Adventure]:
+    async def find_by_filters(
+        self, filters: AdventureFilters, page: Page, sort: SortOrder = SortOrder.RELEVANCE
+    ) -> list[Adventure]:
         raise NotImplementedError
 
     async def find_by_author(self, author_id: str) -> list[Adventure]:
@@ -87,7 +116,7 @@ class MongoAdventureRepository(MongoCrudRepository[Adventure]):
 class MongoMonsterRepository(MongoCrudRepository[Monster]):
     COLLECTION = "monsters"
 
-    async def find_by_challenge_rating(self, minimum: float, maximum: float) -> list[Monster]:
+    async def find_by_filters(self, filters: MonsterFilters, page: Page) -> list[Monster]:
         raise NotImplementedError
 
     async def most_played(self, limit: int = 20) -> list[Monster]:
@@ -104,7 +133,7 @@ class MongoCharacterRepository(MongoCrudRepository[PlayerCharacter]):
         """Агрегація по вкладеному масиву заклять."""
         raise NotImplementedError
 
-    async def class_race_distribution(self) -> dict[tuple[str, str], int]:
+    async def class_race_distribution(self) -> list[tuple[str, str, int]]:
         raise NotImplementedError
 
 
@@ -116,4 +145,7 @@ class MongoEncounterRepository(MongoCrudRepository[Encounter]):
         raise NotImplementedError
 
     async def median_rounds(self, exclude_abandoned: bool = True) -> float:
+        raise NotImplementedError
+
+    async def party_composition(self, level: int | None = None) -> list[tuple[str, int]]:
         raise NotImplementedError

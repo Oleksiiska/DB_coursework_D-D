@@ -3,6 +3,7 @@ from app.presentation.rest.controllers import (
     CardController,
     ErrorTranslator,
     SearchController,
+    StatisticsController,
 )
 from app.presentation.rest.routes import RouteRegistry
 
@@ -12,4 +13,5 @@ __all__ = [
     "ErrorTranslator",
     "RouteRegistry",
     "SearchController",
+    "StatisticsController",
 ]

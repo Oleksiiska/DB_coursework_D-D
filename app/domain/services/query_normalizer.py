@@ -2,12 +2,12 @@
 
 Розміщено в доменному шарі, а не в адаптері кешу: зведення до нижнього
 регістру та впорядкування слів — правило предметної області, а не
-деталь зберігання.
+деталь зберігання (п. 3.8.5).
 """
 
 from __future__ import annotations
 
-from app.domain.values import Filters
+from app.domain.values import DocumentKind, SearchSpecification
 
 
 class QueryNormalizer:
@@ -23,8 +23,12 @@ class QueryNormalizer:
         """
         raise NotImplementedError
 
-    def cache_key(self, raw: str, filters: Filters) -> str:
-        """Складений ключ: нормалізований текст плюс відбиток фільтрів."""
+    def cache_key(self, kind: DocumentKind, raw: str, spec: SearchSpecification) -> str:
+        """Складений ключ: вид пошуку, нормалізований текст, відбиток фільтрів.
+
+        Вид входить у ключ, щоб пошук пригод і пошук монстрів за тим
+        самим текстом не перетиналися в кеші.
+        """
         raise NotImplementedError
 
     def is_empty(self, raw: str) -> bool:

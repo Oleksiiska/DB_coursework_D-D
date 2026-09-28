@@ -14,7 +14,7 @@ class DomainError(Exception):
 class ValidationError(DomainError):
     """Документ не задовольняє інваріанти сутності.
 
-    Породжує запис у журналі браку.
+    Породжує запис у журналі браку (п. 2.11).
     """
 
     def __init__(self, entity: str, reasons: list[str]) -> None:
@@ -38,7 +38,7 @@ class UnknownVocabularyTerm(DomainError):
     """Значення не знайдено в контрольованому словнику.
 
     Не відкидає документ: поле лишається порожнім, значення
-    потрапляє в журнал нерозпізнаних.
+    потрапляє в журнал нерозпізнаних (п. 2.11, правило 4).
     """
 
     def __init__(self, vocabulary: str, term: str) -> None:

@@ -1,11 +1,14 @@
-"""Сценарії читання карток об'єктів (запити групи 4)."""
+"""Сценарії читання карток об'єктів (групи запитів 4, 5)."""
 
 from __future__ import annotations
 
-from app.application.dto import AdventureCardDTO, MonsterCardDTO, RecommendationDTO
+from app.application.dto import AdventureCardDTO, AuthorCardDTO, CharacterCardDTO, MonsterCardDTO
+from app.domain.entities import Author
 from app.domain.ports import (
     AdventureRepository,
     CacheStore,
+    CharacterRepository,
+    CrudRepository,
     GraphRepository,
     MonsterRepository,
 )
@@ -25,35 +28,52 @@ class GetAdventureCardHandler:
         raise NotImplementedError
 
 
-class GetMonsterStatsHandler:
-    """Картка монстра разом із популярністю в реальних іграх."""
+class GetMonsterCardHandler:
+    """Картка монстра разом із переліком пригод, де він зустрічається."""
 
-    def __init__(self, repository: MonsterRepository, graph: GraphRepository) -> None:
+    CACHE_TTL_SECONDS = 600
+
+    def __init__(self, repository: MonsterRepository, graph: GraphRepository, cache: CacheStore) -> None:
         self._repository = repository
         self._graph = graph
+        self._cache = cache
 
     async def handle(self, monster_id: str) -> MonsterCardDTO:
         raise NotImplementedError
 
-    async def most_played(self, limit: int = 20) -> list[MonsterCardDTO]:
-        """Запит групи 7: найчастіші монстри реальних ігор."""
-        raise NotImplementedError
 
+class GetCharacterCardHandler:
+    """Картка персонажа гравця — читання одного документа за ключем."""
 
-class GetRecommendationsHandler:
-    """Рекомендації через обхід графа (запити групи 8)."""
+    CACHE_TTL_SECONDS = 600
 
-    CACHE_TTL_SECONDS = 900
-
-    def __init__(self, graph: GraphRepository, repository: AdventureRepository, cache: CacheStore) -> None:
-        self._graph = graph
+    def __init__(self, repository: CharacterRepository, cache: CacheStore) -> None:
         self._repository = repository
         self._cache = cache
 
-    async def handle(self, adventure_id: str, limit: int = 10) -> list[RecommendationDTO]:
-        """Схожі за спільними тегами та монстрами, з поясненням підстави."""
+    async def handle(self, character_id: str) -> CharacterCardDTO:
         raise NotImplementedError
 
-    async def campaign_chain(self, setting_id: str, level_from: int, level_to: int) -> list[RecommendationDTO]:
-        """Ланцюжок пригод у межах світу без повторення монстрів."""
+
+class GetAuthorCardHandler:
+    """Картка автора: профіль, інші роботи, співавтори.
+
+    Автор зберігається узагальненим CRUD-репозиторієм без спеціалізації.
+    """
+
+    CACHE_TTL_SECONDS = 600
+
+    def __init__(
+        self,
+        authors: CrudRepository[Author],
+        adventures: AdventureRepository,
+        graph: GraphRepository,
+        cache: CacheStore,
+    ) -> None:
+        self._authors = authors
+        self._adventures = adventures
+        self._graph = graph
+        self._cache = cache
+
+    async def handle(self, author_id: str) -> AuthorCardDTO:
         raise NotImplementedError

@@ -1,15 +1,14 @@
-"""Конфігурація журналювання з рівнями.
-
-Рівень задається змінною середовища без зміни коду: вимога
-до гнучкого логування.
-"""
+"""Журналювання з рівнями та журнали якості даних."""
 
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 
 class LoggingConfigurator:
+    """Рівень задається змінною середовища без зміни коду."""
+
     LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 
     def configure(self, level: str = "INFO", json_format: bool = False) -> None:
@@ -19,21 +18,19 @@ class LoggingConfigurator:
         raise NotImplementedError
 
 
-class RejectedDocumentLog:
-    """Журнал браку: документи, що не пройшли валідацію."""
+class FileDataQualityLog:
+    """Реалізує порт `DataQualityLog`.
 
-    def __init__(self, path: str) -> None:
-        self._path = path
+    Два файли у форматі JSON Lines: журнал браку та журнал
+    нерозпізнаних значень словників.
+    """
 
-    async def write(self, document: dict, reasons: list[str]) -> None:
+    def __init__(self, rejected_path: Path, unknown_terms_path: Path) -> None:
+        self._rejected_path = rejected_path
+        self._unknown_terms_path = unknown_terms_path
+
+    async def rejected(self, document: dict, reasons: list[str]) -> None:
         raise NotImplementedError
 
-
-class UnknownTermLog:
-    """Журнал нерозпізнаних значень словників."""
-
-    def __init__(self, path: str) -> None:
-        self._path = path
-
-    async def write(self, vocabulary: str, term: str) -> None:
+    async def unknown_term(self, vocabulary: str, term: str) -> None:
         raise NotImplementedError

@@ -1,4 +1,4 @@
-"""Доменні служби."""
+"""Доменні служби (п. 3.8, таблиця 3.8)."""
 
 from app.domain.services.document_validator import DocumentValidator
 from app.domain.services.environment_classifier import EnvironmentClassifier

@@ -2,6 +2,7 @@
 
 from app.infrastructure.persistence.graph_adapter import GraphAdapter
 from app.infrastructure.persistence.mongo_repository import (
+    DataclassDocumentMapper,
     DocumentMapper,
     MongoAdventureRepository,
     MongoCharacterRepository,
@@ -13,6 +14,7 @@ from app.infrastructure.persistence.redis_adapter import RedisCacheAdapter, Redi
 from app.infrastructure.persistence.search_adapter import SearchIndexAdapter
 
 __all__ = [
+    "DataclassDocumentMapper",
     "DocumentMapper",
     "GraphAdapter",
     "MongoAdventureRepository",

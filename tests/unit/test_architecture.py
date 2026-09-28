@@ -1,7 +1,8 @@
-"""Автоматична перевірка правила залежностей (п. 4.7).
+"""Автоматична перевірка правила залежностей (п. 3.7).
 
 Імпорт із зовнішнього шару у внутрішній є помилкою архітектури,
-і вона має виявлятися тестом, а не оглядом коду.
+і вона має виявлятися тестом, а не оглядом коду. Дозволені імпорти
+відповідають таблицям 3.2 і 3.7 звіту.
 """
 
 from __future__ import annotations
@@ -9,15 +10,19 @@ from __future__ import annotations
 import ast
 import pathlib
 
-ROOT = pathlib.Path(__file__).resolve().parents[2] / "app"
+PROJECT = pathlib.Path(__file__).resolve().parents[2]
+ROOT = PROJECT / "app"
 
 #: Що кожному шару дозволено імпортувати
 ALLOWED: dict[str, set[str]] = {
     "domain": {"domain"},
     "application": {"domain", "application"},
-    "presentation": {"domain", "application", "presentation"},
+    "presentation": {"application", "presentation"},
     "infrastructure": {"domain", "application", "infrastructure"},
 }
+
+#: Процеси бачать порти й композиційний корінь, але не адаптери напряму
+WORKERS_ALLOWED = ("app.domain", "app.application", "app.infrastructure.config", "workers")
 
 
 def _layer_of(path: pathlib.Path) -> str | None:
@@ -25,21 +30,19 @@ def _layer_of(path: pathlib.Path) -> str | None:
     return parts[0] if parts and parts[0] in ALLOWED else None
 
 
-def _imported_layers(path: pathlib.Path) -> set[str]:
+def _imported_modules(path: pathlib.Path) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    layers: set[str] = set()
+    modules: set[str] = set()
     for node in ast.walk(tree):
-        module = None
         if isinstance(node, ast.ImportFrom) and node.module:
-            module = node.module
+            modules.add(node.module)
         elif isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name.startswith("app."):
-                    layers.add(alias.name.split(".")[1])
-            continue
-        if module and module.startswith("app."):
-            layers.add(module.split(".")[1])
-    return layers
+            modules.update(alias.name for alias in node.names)
+    return modules
+
+
+def _imported_layers(path: pathlib.Path) -> set[str]:
+    return {m.split(".")[1] for m in _imported_modules(path) if m.startswith("app.") and m.count(".") >= 1}
 
 
 def test_dependency_rule_holds() -> None:
@@ -52,6 +55,16 @@ def test_dependency_rule_holds() -> None:
             if imported not in ALLOWED[layer]:
                 violations.append(f"{path.relative_to(ROOT)}: {layer} -> {imported}")
     assert not violations, "порушення правила залежностей:\n" + "\n".join(violations)
+
+
+def test_workers_use_ports_and_composition_root_only() -> None:
+    """Процес отримує адаптери лише через композиційний корінь."""
+    violations: list[str] = []
+    for path in (PROJECT / "workers").rglob("*.py"):
+        for module in _imported_modules(path):
+            if module.split(".")[0] in {"app", "workers"} and not module.startswith(WORKERS_ALLOWED):
+                violations.append(f"{path.relative_to(PROJECT)}: {module}")
+    assert not violations, "процес імпортує адаптер напряму:\n" + "\n".join(violations)
 
 
 def test_domain_imports_no_third_party() -> None:

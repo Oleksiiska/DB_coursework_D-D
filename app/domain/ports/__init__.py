@@ -1,18 +1,22 @@
-"""Порти: оголошення інтерфейсів у доменному шарі."""
+"""Вихідні порти: оголошення інтерфейсів у доменному шарі.
+
+Вхідні порти оголошено в шарі сценаріїв (`app.application.ports`).
+"""
 
 from app.domain.ports.outbound import (
     AdventureRepository,
     CacheStore,
     CharacterRepository,
     CrudRepository,
+    DataQualityLog,
     DocumentSource,
     EncounterRepository,
+    EventConsumer,
     EventPublisher,
     GraphRepository,
     MetricsSink,
     MonsterRepository,
     SearchIndex,
-    ShardKeyProvider,
 )
 
 __all__ = [
@@ -20,12 +24,13 @@ __all__ = [
     "CacheStore",
     "CharacterRepository",
     "CrudRepository",
+    "DataQualityLog",
     "DocumentSource",
     "EncounterRepository",
+    "EventConsumer",
     "EventPublisher",
     "GraphRepository",
     "MetricsSink",
     "MonsterRepository",
     "SearchIndex",
-    "ShardKeyProvider",
 ]

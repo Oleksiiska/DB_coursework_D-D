@@ -1,4 +1,4 @@
-"""Сутність «Пригода» — центральна сутність каталогу."""
+"""Сутність «Пригода» — центральна сутність каталогу (п. 1.4, додаток А, таблиця А.2)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from app.domain.values import (
-    Filters,
+    AdventureFilters,
     LevelRange,
     Money,
     PartySize,
@@ -16,7 +16,7 @@ from app.domain.values import (
 
 @dataclass(slots=True)
 class Review:
-    """Відгук. Вкладена структура, не самостійна сутність.
+    """Відгук. Вкладена структура, не самостійна сутність (п. 1.4.1).
 
     Джерело: блок коментарів картки, у середньому 9,6 на пригоду.
     """
@@ -89,7 +89,7 @@ class Adventure:
     def validate(self) -> list[str]:
         """Перелік порушених інваріантів; порожній — документ валідний.
 
-        Обов'язкові: title, synopsis, provenance.origin.
+        Обов'язкові: title, synopsis, provenance.origin (п. 2.11, правило 3).
         """
         raise NotImplementedError
 
@@ -101,7 +101,7 @@ class Adventure:
         """
         raise NotImplementedError
 
-    def matches(self, filters: Filters) -> bool:
+    def matches(self, filters: AdventureFilters) -> bool:
         """Перевірка відповідності фільтрам на рівні домену.
 
         Використовується у модульних тестах як еталон поведінки адаптера.

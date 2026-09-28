@@ -1,0 +1,72 @@
+@startuml 03-ports-adapters
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam dpi 150
+skinparam defaultFontSize 12
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam ArrowColor #333333
+skinparam HeaderFontColor #777777
+skinparam HeaderFontSize 10
+hide empty members
+
+header
+станом на 28.09.2026 · побудовано з вихідного коду
+endheader
+
+left to right direction
+interface AdventureRepository <<вихідний порт>> #D2EADF
+interface CacheStore <<вихідний порт>> #D2EADF
+interface CharacterRepository <<вихідний порт>> #D2EADF
+interface CrudRepository <<вихідний порт>> #D2EADF
+interface DataQualityLog <<вихідний порт>> #D2EADF
+interface DocumentSource <<вихідний порт>> #D2EADF
+interface EncounterRepository <<вихідний порт>> #D2EADF
+interface EventConsumer <<вихідний порт>> #D2EADF
+interface EventPublisher <<вихідний порт>> #D2EADF
+interface GraphRepository <<вихідний порт>> #D2EADF
+interface MetricsSink <<вихідний порт>> #D2EADF
+interface MonsterRepository <<вихідний порт>> #D2EADF
+interface SearchIndex <<вихідний порт>> #D2EADF
+class QueueAdapter <<адаптер>> #E1E1E1
+class FileDataQualityLog <<адаптер>> #E1E1E1
+class GraphAdapter <<адаптер>> #E1E1E1
+class MongoAdventureRepository <<адаптер>> #E1E1E1
+class MongoCharacterRepository <<адаптер>> #E1E1E1
+class MongoCrudRepository <<адаптер>> #E1E1E1
+class MongoEncounterRepository <<адаптер>> #E1E1E1
+class MongoMonsterRepository <<адаптер>> #E1E1E1
+class RedisCacheAdapter <<адаптер>> #E1E1E1
+class RedisMetricsAdapter <<адаптер>> #E1E1E1
+class SearchIndexAdapter <<адаптер>> #E1E1E1
+class CrawlerSource <<адаптер>> #E1E1E1
+class CsvSource <<адаптер>> #E1E1E1
+class GeneratorSource <<адаптер>> #E1E1E1
+DocumentSource <|.. CrawlerSource
+DocumentSource <|.. CsvSource
+DataQualityLog <|.. FileDataQualityLog
+DocumentSource <|.. GeneratorSource
+GraphRepository <|.. GraphAdapter
+AdventureRepository <|.. MongoAdventureRepository
+CharacterRepository <|.. MongoCharacterRepository
+CrudRepository <|.. MongoCrudRepository
+EncounterRepository <|.. MongoEncounterRepository
+MonsterRepository <|.. MongoMonsterRepository
+EventConsumer <|.. QueueAdapter
+EventPublisher <|.. QueueAdapter
+CacheStore <|.. RedisCacheAdapter
+MetricsSink <|.. RedisMetricsAdapter
+SearchIndex <|.. SearchIndexAdapter
+CrudRepository <|-- AdventureRepository
+CrudRepository <|-- CharacterRepository
+CrudRepository <|-- EncounterRepository
+MongoCrudRepository <|-- MongoAdventureRepository
+MongoCrudRepository <|-- MongoCharacterRepository
+MongoCrudRepository <|-- MongoEncounterRepository
+MongoCrudRepository <|-- MongoMonsterRepository
+CrudRepository <|-- MonsterRepository
+legend right
+<back:#D2EADF>      </back>  domain — предметна область
+<back:#E1E1E1>      </back>  infrastructure — адаптери
+endlegend
+@enduml
