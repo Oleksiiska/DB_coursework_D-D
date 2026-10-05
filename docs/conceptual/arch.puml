@@ -201,70 +201,78 @@ end note
 
 
 ' ------------------------------------------------------------
-'  Рисунок 3.4. Процеси та їх взаємодія
+'  Рисунок 3.4. Процеси, контейнери та їх взаємодія
 ' ------------------------------------------------------------
 @startuml arch-04-processes
 skinparam backgroundColor white
 skinparam shadowing false
 skinparam dpi 150
-skinparam componentStyle rectangle
 skinparam defaultFontSize 12
+skinparam componentStyle rectangle
+skinparam nodesep 12
+skinparam ranksep 40
+left to right direction
 
 node "Браузер" as BR {
   component "Панель\nмоніторингу" as UI
 }
 
-node "Процес: API" as N1 {
-  component "REST + SSE" as API
-  component "Обробники запитів" as QH
+node "Docker-хост · docker compose · мережа backend" as HOST {
+  package "Контейнери з образу застосунку" as IMG #F8F4EC {
+    node "api" <<контейнер>> as C_API {
+      component "REST + SSE" as API
+    }
+    node "csv-loader" <<контейнер>> as C_CSV {
+      component "CsvLoader" as CSV
+    }
+    node "generator ×N" <<контейнер>> as C_GEN {
+      component "GeneratorWorker" as GEN
+    }
+    node "crawler" <<контейнер>> as C_CRW {
+      component "CrawlerWorker\n<size:10>бонусна частина</size>" as CRW
+    }
+    node "ingest-worker ×N" <<контейнер>> as C_ING {
+      component "IngestWorker" as ING
+    }
+    node "storage-check" <<контейнер>> as C_CHK {
+      component "StorageCheck" as CHK
+    }
+  }
+  package "Контейнери сховищ з офіційних образів" as STORES #EDF4F2 {
+    node "redis" <<контейнер>> as C_RED {
+      queue "черга" as MQ
+      database "кеш і\nлічильники" as RD
+    }
+    node "mongos, config,\nshard ×3" <<контейнери>> as C_MONGO {
+      database "документне\nсховище" as DB
+    }
+    node "elasticsearch" <<контейнер>> as C_ES {
+      database "пошуковий\nіндекс" as ES
+    }
+    node "neo4j" <<контейнер>> as C_NEO {
+      database "граф" as GR
+    }
+  }
 }
 
-node "Процес: CsvLoader" as N5 {
-  component "Читання CSV\nіз заданою швидкістю" as CSV
-}
+folder "logs/\nна комп'ютері" as LOGS
 
-node "Процес: Generator" as N2 {
-  component "Генератор\nдокументів" as GEN
-}
-
-node "Процес: Crawler" as N3 {
-  component "Краулер\n(бонус)" as CRW
-}
-
-node "Процес: IngestWorker" as N4 {
-  component "Споживач черги" as IW
-  component "IngestDocumentHandler" as BW
-}
-
-queue "Черга повідомлень" as MQ
-database "Сховища" as DB
-database "Кеш і лічильники" as RD
-
-UI --> API : HTTP
-API --> UI : SSE, раз на секунду
-API --> RD : швидкість генерації
-GEN --> RD : читає цільову швидкість
+UI --> API : HTTP, SSE
 CSV --> MQ : EventPublisher
-GEN --> MQ : EventPublisher
-CRW --> MQ : EventPublisher
-MQ --> IW : EventConsumer
-IW --> BW
-BW --> DB
-BW --> RD : лічильники
-QH --> DB
-QH --> RD
+GEN --> MQ
+CRW --> MQ
+GEN --> RD : цільова\nшвидкість
+API --> RD : швидкість,\nстатистика
+ING <-- MQ : EventConsumer
+ING --> DB
+ING --> ES
+ING --> GR
+API ..> DB : читання
+API ..> ES
+API ..> GR
+CHK --> DB : запис\nі читання
+IMG ..> LOGS : журнали —\nзмонтований каталог
 
-note right of MQ
-  Черга розв'язує швидкості:
-  джерела можуть випереджати
-  сховище, не втрачаючи даних
-end note
-
-note bottom of N2
-  Окремий процес обходить
-  обмеження GIL для
-  CPU-bound генерації
-end note
 
 @enduml
 

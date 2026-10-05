@@ -82,14 +82,23 @@ class AdventureRepository(CrudRepository[Adventure], Protocol):
 @runtime_checkable
 class MonsterRepository(CrudRepository[Monster], Protocol):
     async def find_by_filters(self, filters: MonsterFilters, page: Page) -> list[Monster]:
-        """Підбір за рівнем небезпеки та середовищем (група запитів 3)."""
+        """Підбір за рівнем небезпеки та середовищем за індексами документного сховища.
+
+        Видачу групи запитів 3 будує пошуковий індекс (SearchMonstersHandler),
+        бо там фільтр поєднується з текстом в одному запиті.
+        """
         ...
 
     async def most_played(self, limit: int = 20) -> list[Monster]:
         """Найпопулярніші монстри реальних ігор (група запитів 7)."""
         ...
 
-    async def bump_play_counts(self, counts: dict[str, int]) -> None:
+    async def set_play_counts(self, counts: dict[str, int]) -> None:
+        """Записує кількість появ, перераховану за записами участі.
+
+        Значення встановлюється, а не додається: повторна доставка
+        пакета не подвоює лічильників.
+        """
         ...
 
 

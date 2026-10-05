@@ -1,0 +1,45 @@
+# Перевірка контейнерів: процес застосунку й документне сховище
+# в одній мережі. Докладно — README, розділ «Запуск у контейнерах».
+#
+#   docker compose up --build storage-check
+#
+name: dnd-adventures
+
+services:
+  mongo:
+    image: mongo:8.0
+    container_name: dnd-mongo
+    networks: [backend]
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  storage-check:
+    build: .
+    image: dnd-adventures-app:0.1
+    container_name: dnd-storage-check
+    command: ["storage-check"]
+    # На Linux, якщо ваш UID не 1000: APP_UID=$(id -u) APP_GID=$(id -g) docker compose up ...
+    user: "${APP_UID:-1000}:${APP_GID:-1000}"
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+      MONGO_DATABASE: dnd
+      LOG_DIR: /app/logs
+      LOG_LEVEL: INFO
+    volumes:
+      - ./logs:/app/logs
+    networks: [backend]
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+networks:
+  backend:
+
+volumes:
+  mongo-data:

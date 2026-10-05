@@ -19,6 +19,7 @@ class CrawlerWorker <<процес>> #FCE9B8
 class CsvLoader <<процес>> #FCE9B8
 class GeneratorWorker <<процес>> #FCE9B8
 class IngestWorker <<процес>> #FCE9B8
+class StorageCheck <<процес>> #FCE9B8
 class AdminController <<контролер>> #F1E0C0
 class ConfigureRateHandler <<обробник>> #E2D8F3
 class IngestDocumentHandler <<обробник>> #E2D8F3
@@ -59,6 +60,7 @@ IngestDocumentHandler --> ShardKeyService
 IngestDocumentHandler --> VocabularyNormalizer
 IngestWorker --> EventConsumer
 IngestWorker --> IngestDocumentUseCase
+StorageCheck --> CrudRepository : [Adventure]
 legend right
 <back:#FCE9B8>      </back>  процеси
 <back:#F1E0C0>      </back>  presentation — подання

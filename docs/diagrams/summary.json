@@ -1,9 +1,9 @@
 {
-  "modules": 53,
-  "groups": 22,
-  "classes": 131,
+  "modules": 54,
+  "groups": 23,
+  "classes": 133,
   "classes_by_kind": {
-    "adapter": 20,
+    "adapter": 21,
     "config": 4,
     "controller": 7,
     "dto": 15,
@@ -13,7 +13,7 @@
     "handler": 13,
     "inbound": 10,
     "outbound": 13,
-    "process": 5,
+    "process": 6,
     "service": 5,
     "spec": 1,
     "value": 12
@@ -21,11 +21,11 @@
   "relations_by_kind": {
     "association": 7,
     "composition": 22,
-    "dependency": 60,
+    "dependency": 61,
     "generalization": 16,
     "realization": 28,
     "reference": 11,
-    "use": 87
+    "use": 90
   },
   "realizations": [
     "AdventureFilters ..|> SearchSpecification",

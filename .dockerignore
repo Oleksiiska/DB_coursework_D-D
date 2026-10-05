@@ -1,0 +1,11 @@
+# В образ потрапляють лише app/, workers/ і requirements.txt
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.git
+logs
+docs
+tests
+tools
+*.zip
+*.md

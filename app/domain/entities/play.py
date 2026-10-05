@@ -58,7 +58,7 @@ class PlayerCharacter:
     classes_all: list[ClassLevel] = field(default_factory=list)
     hp: HitPoints = field(default_factory=HitPoints)
 
-    # Закляття — вкладений масив назв, не окрема сутність (п. 1.4.1)
+    # Закляття — вкладений масив назв, не окрема сутність (п. 1.4)
     spells: list[str] = field(default_factory=list)
     spells_srd: list[str] = field(default_factory=list)
 

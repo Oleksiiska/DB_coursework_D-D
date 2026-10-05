@@ -1,12 +1,11 @@
 # Скелет застосунку
 
-<<<<<<< HEAD
-Класи-заглушки за архітектурою розділу 3: шари, порти й адаптери, CQRS.
-=======
-Класи-заглушки за архітектурою: шари, порти й адаптери, CQRS.
->>>>>>> 53af480d0ed38a08aa2d9868c790e0e98acd13f1
-Тіла методів оголошені як `NotImplementedError` — фіксується структура
-та контракти, а не поведінка.
+Класи за архітектурою розділу 3: шари, порти й адаптери, CQRS.
+Більшість тіл методів поки оголошені як `NotImplementedError` — фіксується
+структура та контракти. Реалізовано наскрізний шлях до документного
+сховища: відображення сутностей на документи, узагальнений репозиторій,
+конфігурацію зі змінних середовища, журналювання й процес перевірки
+сховища, який запускається в контейнері.
 
 ## Перевірка
 
@@ -27,6 +26,58 @@ python -m pytest tests/unit -q
 | `test_diagrams.py` | кожен вихідний порт має адаптер, кожен вхідний — рівно один обробник; схеми будуються з поточного коду |
 | `test_async_contract.py` | кожен метод порту — співпрограма, і жодна реалізація не підміняє його синхронним |
 
+## Запуск у контейнерах
+
+Потрібен Docker Desktop (Windows, macOS) або Docker Engine з плагіном
+Compose (Linux). Команди виконуються в корені проєкту.
+
+```
+docker compose up --build storage-check
+```
+
+Compose збирає образ застосунку з `Dockerfile`, запускає контейнер
+`dnd-mongo` з документним сховищем, чекає, доки воно відповість, і
+запускає контейнер `dnd-storage-check`. Процес записує пригоду в
+сховище через порт `CrudRepository`, читає її назад, порівнює й
+завершується з кодом 0, якщо документи збіглися. Після рядка
+`dnd-storage-check exited with code 0` перевірку завершено; сховище
+лишається запущеним до `docker compose down`.
+
+Очікуваний вивід (час і ключ пригоди щоразу інші):
+
+```
+INFO    launcher: процес storage-check, сховище mongodb://mongo:27017, журнал /app/logs/storage-check.log
+INFO    storage-check: запис пригоди check-1a2b3c4d «Прокляте село на болотах»
+INFO    storage-check: прочитано: «Прокляте село на болотах», рівні 1–3, гравців 3–5, теги horror, investigation, відгуків 1
+INFO    storage-check: прочитаний документ збігається із записаним: так
+INFO    storage-check: пригод у колекції: 1
+```
+
+| Що перевірити | Команда |
+|---|---|
+| вивід процесу | `docker compose logs storage-check` |
+| журнал на комп'ютері | файл `logs/storage-check.log`: `cat logs/storage-check.log` (bash, PowerShell) або `type logs\storage-check.log` (cmd) |
+| документи в сховищі | `docker compose exec mongo mongosh dnd --eval "db.adventures.find()"` |
+| журнал лишається після видалення контейнера | `docker compose rm -f storage-check`, потім знову відкрити `logs/storage-check.log` |
+| дані лишаються після перезапуску | повторний `docker compose up storage-check`: лічильник «пригод у колекції» зростає |
+| зупинка | `docker compose down`; з видаленням даних сховища — `docker compose down -v` |
+
+Журнал пишеться і в стандартний вивід, і у файл: каталог `logs/`
+змонтовано в контейнер як `/app/logs`. На Linux, якщо ваш UID не 1000,
+запускайте так: `APP_UID=$(id -u) APP_GID=$(id -g) docker compose up --build storage-check`.
+
+Інтеграційні тести репозиторію на справжньому сховищі (потрібні
+`pip install -r requirements-dev.txt` і вільний порт 27017):
+
+```
+docker run --rm -d -p 27017:27017 --name dnd-mongo-test mongo:8.0
+MONGO_URI=mongodb://localhost:27017 python -m pytest tests/integration -q
+docker stop dnd-mongo-test
+```
+
+У PowerShell змінну задають окремо:
+`$env:MONGO_URI="mongodb://localhost:27017"; python -m pytest tests/integration -q`.
+
 ## Схеми
 
 ```
@@ -41,7 +92,7 @@ python tools/arch_diagrams.py --out docs/diagrams --plantuml plantuml.jar
 | `docs/conceptual` | концептуальні схеми, `arch.puml` — шари, порти й адаптери, CQRS, процеси, послідовності | 3.1–3.4, 3.11, 3.12 |
 | `docs/diagrams` | схеми, згенеровані з коду: модулі, доменна модель, реалізації портів, шлях запитів, шлях команд, зріз пошуку; `summary.json` — кількісна зведенка | 3.5–3.10 |
 
-Стан на 28.09.2026: 52 модулі, 130 класів, 10 вхідних і 13 вихідних
+Стан на 28.09.2026: 54 модулі, 133 класи, 10 вхідних і 13 вихідних
 портів, 28 зв'язків реалізації.
 
 ## Розкладка

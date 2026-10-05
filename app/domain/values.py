@@ -11,7 +11,11 @@ from typing import Protocol, runtime_checkable
 
 
 class SourceOrigin(str, Enum):
-    """Походження документа (розділ 2)."""
+    """Шлях надходження документа (п. 2.1.2).
+
+    Разом із видом документа однозначно вказує джерело з таблиці 2.1:
+    підготовлені CSV — це SRD, FIREBALL або каталог itch.io залежно від виду.
+    """
 
     CSV = "csv"
     GENERATED = "generated"

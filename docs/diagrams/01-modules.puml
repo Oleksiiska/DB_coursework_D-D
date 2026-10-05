@@ -22,6 +22,7 @@ package "процеси" #FFF8E7 {
   component "generator_worker" as m_processes_generator_worker
   component "ingest_worker" as m_processes_ingest_worker
   component "launcher" as m_processes_launcher
+  component "storage_check" as m_processes_storage_check
 }
 package "presentation — подання" #F8F4EC {
   component "rest" as m_presentation_rest
@@ -66,6 +67,7 @@ m_domain_services --> m_domain_errors
 m_domain_services --> m_domain_values
 m_application_commands <-- m_infrastructure_config
 m_application_queries <-- m_infrastructure_config
+m_domain_entities <-- m_infrastructure_config
 m_domain_ports <-- m_infrastructure_config
 m_domain_services <-- m_infrastructure_config
 m_domain_values <-- m_infrastructure_config
@@ -87,11 +89,16 @@ m_processes_csv_loader --> m_domain_values
 m_processes_generator_worker --> m_domain_ports
 m_processes_ingest_worker --> m_application_ports
 m_processes_ingest_worker --> m_domain_ports
+m_processes_launcher --> m_domain_values
 m_processes_launcher --> m_infrastructure_config
 m_processes_launcher --> m_processes_crawler_worker
 m_processes_launcher --> m_processes_csv_loader
 m_processes_launcher --> m_processes_generator_worker
 m_processes_launcher --> m_processes_ingest_worker
+m_processes_launcher --> m_processes_storage_check
+m_processes_storage_check --> m_domain_entities
+m_processes_storage_check --> m_domain_ports
+m_processes_storage_check --> m_domain_values
 m_application_ports <|.. m_application_commands
 m_application_ports <|.. m_application_queries
 m_domain_ports <|.. m_infrastructure_messaging

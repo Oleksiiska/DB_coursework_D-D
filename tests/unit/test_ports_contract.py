@@ -91,10 +91,14 @@ def test_infrastructure_adapters_satisfy_ports() -> None:
         SearchIndexAdapter,
     )
 
+    from app.domain.entities import Adventure, Author
+
     client: Any = None
-    mapper = DataclassDocumentMapper(dict)
-    assert isinstance(MongoCrudRepository(client, "authors", mapper), CrudRepository)
-    assert isinstance(MongoAdventureRepository(client, "adventures", mapper), AdventureRepository)
+    documents: Any = {"dnd": {"authors": object(), "adventures": object()}}
+    authors = DataclassDocumentMapper(Author, ("author_id",))
+    adventures = DataclassDocumentMapper(Adventure, ("adventure_id",))
+    assert isinstance(MongoCrudRepository(documents, "authors", authors), CrudRepository)
+    assert isinstance(MongoAdventureRepository(documents, "adventures", adventures), AdventureRepository)
     assert isinstance(SearchIndexAdapter(client, "adventures_idx"), SearchIndex)
     assert isinstance(GraphAdapter(client), GraphRepository)
     assert isinstance(RedisCacheAdapter(client), CacheStore)
