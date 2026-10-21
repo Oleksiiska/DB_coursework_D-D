@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import pathlib
+import sys
 
 PROJECT = pathlib.Path(__file__).resolve().parents[2]
 ROOT = PROJECT / "app"
@@ -68,8 +69,9 @@ def test_workers_use_ports_and_composition_root_only() -> None:
 
 
 def test_domain_imports_no_third_party() -> None:
-    """Доменний шар використовує лише стандартну бібліотеку."""
-    allowed_roots = {"app", "typing", "dataclasses", "enum", "datetime", "abc", "__future__"}
+    """Доменний шар використовує лише стандартну бібліотеку (п. 3.2): стемер
+    Портера, хеш ключа розподілу й нормалізація Unicode — її засобами."""
+    allowed_roots = set(sys.stdlib_module_names) | {"app"}
     violations: list[str] = []
     for path in (ROOT / "domain").rglob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"))

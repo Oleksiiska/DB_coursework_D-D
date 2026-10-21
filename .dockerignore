@@ -1,4 +1,6 @@
-# В образ потрапляють лише app/, workers/ і requirements.txt
+# В образ потрапляють лише app/, workers/ і requirements.txt (таблиця 4.6);
+# config/logging.yaml монтується в контейнери лише для читання, а CSV —
+# з каталогу на комп'ютері
 **/__pycache__
 **/*.pyc
 .pytest_cache
@@ -7,5 +9,7 @@ logs
 docs
 tests
 tools
+config
+data
 *.zip
 *.md

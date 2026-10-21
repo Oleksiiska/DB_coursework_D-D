@@ -25,6 +25,29 @@ class SearchLogEntry:
     cache_hit: bool = False
 
     @classmethod
-    def from_result(cls, *args, **kwargs) -> "SearchLogEntry":
-        """Фабрика з результату виконання запиту."""
-        raise NotImplementedError
+    def from_result(
+        cls,
+        query_id: str,
+        raw_query: str,
+        normalized_query: str,
+        kind: DocumentKind,
+        filters: dict[str, object],
+        results_count: int,
+        latency_ms: int,
+        cache_hit: bool,
+        created_at: datetime,
+    ) -> "SearchLogEntry":
+        """Фабрика з результату виконання запиту: статус FOUND або EMPTY
+        визначається кількістю знайдених документів (таблиця А.12)."""
+        return cls(
+            query_id=query_id,
+            raw_query=raw_query,
+            normalized_query=normalized_query,
+            created_at=created_at,
+            kind=kind,
+            filters=dict(filters),
+            results_count=results_count,
+            status=QueryStatus.FOUND if results_count > 0 else QueryStatus.EMPTY,
+            latency_ms=latency_ms,
+            cache_hit=cache_hit,
+        )

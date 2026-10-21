@@ -11,7 +11,7 @@ skinparam HeaderFontSize 10
 hide empty members
 
 header
-станом на 28.09.2026 · побудовано з вихідного коду
+станом на 21.10.2026 · побудовано з вихідного коду
 endheader
 
 left to right direction
@@ -44,11 +44,14 @@ AdminController --> ConfigureRateUseCase
 ConfigureRateHandler --> CacheStore
 CrawlerWorker --> DocumentSource
 CrawlerWorker --> EventPublisher
+CrawlerWorker --> MetricsSink
 CsvLoader --> "*" DocumentSource : реєстр
 CsvLoader --> EventPublisher
+CsvLoader --> MetricsSink
 GeneratorWorker --> CacheStore
 GeneratorWorker --> DocumentSource
 GeneratorWorker --> EventPublisher
+GeneratorWorker --> MetricsSink
 IngestDocumentHandler --> "*" CrudRepository : реєстр
 IngestDocumentHandler --> DataQualityLog
 IngestDocumentHandler --> DocumentValidator
@@ -61,6 +64,7 @@ IngestDocumentHandler --> VocabularyNormalizer
 IngestWorker --> EventConsumer
 IngestWorker --> IngestDocumentUseCase
 StorageCheck --> CrudRepository : [Adventure]
+StorageCheck --> ShardKeyService
 legend right
 <back:#FCE9B8>      </back>  процеси
 <back:#F1E0C0>      </back>  presentation — подання

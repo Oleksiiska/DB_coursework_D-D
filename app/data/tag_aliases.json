@@ -1,0 +1,66 @@
+[
+  {
+    "name": "dnd",
+    "aliases": [
+      "d&d",
+      "dungeons-and-dragons",
+      "dungeons-dragons",
+      "dungeons & dragons"
+    ]
+  },
+  {
+    "name": "5e",
+    "aliases": [
+      "dnd5e",
+      "dnd-5e",
+      "d&d-5e",
+      "5th-edition",
+      "fifth-edition"
+    ]
+  },
+  {
+    "name": "one-shot",
+    "aliases": [
+      "oneshot",
+      "one shot",
+      "one-shot-adventure"
+    ]
+  },
+  {
+    "name": "osr",
+    "aliases": [
+      "old-school-renaissance",
+      "old-school-revival",
+      "old-school"
+    ]
+  },
+  {
+    "name": "ttrpg",
+    "aliases": [
+      "tabletop-rpg",
+      "tabletop-roleplaying-game",
+      "tabletop-role-playing-game"
+    ]
+  },
+  {
+    "name": "system-agnostic",
+    "aliases": [
+      "system-neutral",
+      "systemless"
+    ]
+  },
+  {
+    "name": "zine",
+    "aliases": [
+      "rpg-zine",
+      "zines"
+    ]
+  },
+  {
+    "name": "horror",
+    "aliases": [
+      "horror-rpg",
+      "horror-adventure"
+    ]
+  }
+]

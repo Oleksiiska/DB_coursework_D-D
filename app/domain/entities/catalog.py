@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from app.domain.values import Provenance, TagCategory
+from app.domain.values import Provenance, SourceOrigin, TagCategory
 
 
 @dataclass(slots=True)
@@ -26,7 +26,13 @@ class Author:
     co_author_ids: list[str] = field(default_factory=list)
 
     def validate(self) -> list[str]:
-        raise NotImplementedError
+        """Обов'язкові: name і походження."""
+        reasons: list[str] = []
+        if not self.name:
+            reasons.append("name: обов'язкове поле")
+        if self.provenance is None or self.provenance.origin is None:
+            reasons.append("origin: обов'язкове поле")
+        return reasons
 
 
 @dataclass(slots=True)
@@ -35,6 +41,8 @@ class Tag:
 
     tag_id: str
     name: str
+    #: csv або crawler — константа адаптера (таблиця А.5)
+    provenance: Provenance = field(default_factory=lambda: Provenance(origin=SourceOrigin.CSV))
     category: TagCategory | None = None
     description: str | None = None
     aliases: list[str] = field(default_factory=list)
@@ -42,7 +50,8 @@ class Tag:
 
     def matches_alias(self, raw: str) -> bool:
         """Зіставлення сирого значення з довідником (п. 2.11, правило 4)."""
-        raise NotImplementedError
+        value = raw.strip().lower()
+        return value == self.name.lower() or value in {alias.lower() for alias in self.aliases}
 
 
 @dataclass(slots=True)
@@ -51,6 +60,8 @@ class Setting:
 
     setting_id: str
     name: str
+    #: Світи складено вручну (app/data/settings.json, таблиця А.6)
+    provenance: Provenance = field(default_factory=lambda: Provenance(origin=SourceOrigin.MANUAL))
     description: str | None = None
     genre: str | None = None
     tone: str | None = None

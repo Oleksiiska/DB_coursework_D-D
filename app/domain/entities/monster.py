@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from app.domain.values import Provenance
+from app.domain.values import Provenance, challenge_window
 
 
 @dataclass(slots=True)
@@ -48,7 +48,7 @@ class StatBlock:
 
 @dataclass(slots=True)
 class Monster:
-    """Ігрова істота."""
+    """Ігрова істота (16 атомарних полів, таблиця А.7)."""
 
     monster_id: str
     name: str
@@ -63,7 +63,6 @@ class Monster:
     alignment: str | None = None
     lore: str | None = None
     image_url: str | None = None
-    source_book: str = "SRD 5.1"
 
     # Обчислювані поля
     environment: list[str] = field(default_factory=list)
@@ -74,11 +73,21 @@ class Monster:
 
     def validate(self) -> list[str]:
         """Обов'язкові: name, type, challenge_rating (п. 2.11, правило 3)."""
-        raise NotImplementedError
+        reasons: list[str] = []
+        if not self.name:
+            reasons.append("name: обов'язкове поле")
+        if not self.type:
+            reasons.append("type: обов'язкове поле")
+        if self.challenge_rating is None:
+            reasons.append("challenge_rating: обов'язкове поле")
+        elif self.challenge_rating < 0:
+            reasons.append("challenge_rating: від'ємне значення")
+        return reasons
 
     def suits_party_level(self, level: int, party_size: int) -> bool:
         """Чи придатний монстр як супротивник партії вказаного рівня."""
-        raise NotImplementedError
+        low, high = challenge_window(level, party_size)
+        return low <= self.challenge_rating <= high
 
     def build_abilities_text(self) -> str:
         """Склейка текстів здібностей для пошукового індексу.
@@ -86,4 +95,10 @@ class Monster:
         Забезпечує запит «знайти монстра за описом здібності» без
         винесення кожної здібності в окреме поле (додаток А, таблиця А.7).
         """
-        raise NotImplementedError
+        block = self.statblock
+        parts = [
+            f"{ability.name}. {ability.description}".strip()
+            for group in (block.special_abilities, block.actions, block.legendary_actions, block.reactions)
+            for ability in group
+        ]
+        return "\n".join(part for part in parts if part)

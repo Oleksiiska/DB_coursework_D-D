@@ -14,6 +14,7 @@ from app.domain.entities import (
     PlayerCharacter,
     StatBlock,
 )
+from app.domain.services import ShardKeyService
 from app.domain.values import HpStatus, Provenance, SourceOrigin
 from app.infrastructure.persistence import DataclassDocumentMapper
 from app.infrastructure.config import Container
@@ -28,13 +29,14 @@ def round_trip(entity, key_fields):
 
 
 def test_adventure_with_nested_values_survives_round_trip() -> None:
-    adventure = StorageCheck.sample()
+    adventure = StorageCheck.sample(ShardKeyService())
     document, restored = round_trip(adventure, ("adventure_id",))
     assert restored == adventure
     assert document["_id"] == adventure.adventure_id
+    assert document["shard_key"] == adventure.shard_key  # кошик рядком: «0517»
     assert document["provenance"]["origin"] == "generated"  # перелік — значенням
     assert document["levels"] == {"minimum": 1, "maximum": 3}  # вкладений об'єкт
-    assert document["reviews"][0]["author_name"] == "Ведучий"
+    assert document["reviews"][0]["author_name"] == "Game Master"
 
 
 def test_monster_statblock_with_nested_lists() -> None:

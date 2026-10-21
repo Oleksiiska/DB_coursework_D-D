@@ -18,6 +18,7 @@ from app.domain.values import (
     SearchHits,
     SearchSpecification,
     SortOrder,
+    SourceBatch,
 )
 
 T = TypeVar("T")
@@ -71,11 +72,31 @@ class AdventureRepository(CrudRepository[Adventure], Protocol):
     ) -> list[Adventure]:
         ...
 
-    async def find_by_author(self, author_id: str) -> list[Adventure]:
-        """Інші роботи автора (група запитів 5)."""
+    async def find_by_author(self, author_id: str, limit: int = 50) -> list[Adventure]:
+        """Інші роботи автора (група запитів 5), від новіших."""
         ...
 
     async def find_chain(self, setting_id: str, level_from: int, level_to: int) -> list[Adventure]:
+        """Пригоди світу, чий діапазон рівнів перетинає заданий, за зростанням рівня."""
+        ...
+
+    async def count_by_shard(self) -> dict[str, int]:
+        """Кількість документів пригод на кожному шарді з метаданих колекції
+        (агрегація $collStats з параметром count, без сканування документів).
+
+        Для шардованого кластера підрахунок інколи неточний: панель показує
+        динаміку й співвідношення шардів, а точні кількості для розділу 6 дає
+        countDocuments за діапазоном shard_key кожної зони (п. 4.9).
+        """
+        ...
+
+    async def author_stats(self, author_ids: Sequence[str]) -> dict[str, dict]:
+        """Похідні поля авторів (таблиця 2.14), перераховані за їхніми роботами:
+        adventures_count, avg_rating, first_published_year, co_author_ids.
+
+        Значення перераховуються, а не накопичуються, тож повторна доставка
+        пакета їх не спотворює.
+        """
         ...
 
 
@@ -96,8 +117,10 @@ class MonsterRepository(CrudRepository[Monster], Protocol):
     async def set_play_counts(self, counts: dict[str, int]) -> None:
         """Записує кількість появ, перераховану за записами участі.
 
-        Значення встановлюється, а не додається: повторна доставка
-        пакета не подвоює лічильників.
+        Під час завантаження play_count надходить у monsters.csv (крок 3
+        таблиці 2.4); метод перезаписує значення після повторної підготовки
+        записів участі. Значення встановлюється, а не додається: повторний
+        виклик не подвоює лічильників.
         """
         ...
 
@@ -114,11 +137,11 @@ class CharacterRepository(CrudRepository[PlayerCharacter], Protocol):
 
 @runtime_checkable
 class EncounterRepository(CrudRepository[Encounter], Protocol):
-    async def median_duration(self, exclude_abandoned: bool = True) -> float:
-        """Медіана, а не середнє: розподіл містить викиди."""
+    async def median_duration(self, exclude_abandoned: bool = True) -> float | None:
+        """Медіана тривалості в секундах, а не середнє: розподіл містить викиди."""
         ...
 
-    async def median_rounds(self, exclude_abandoned: bool = True) -> float:
+    async def median_rounds(self, exclude_abandoned: bool = True) -> float | None:
         ...
 
     async def party_composition(self, level: int | None = None) -> list[tuple[str, int]]:
@@ -162,15 +185,31 @@ class GraphRepository(Protocol):
         """Рекомендації за спільними тегами й монстрами (група запитів 8)."""
         ...
 
-    async def adventures_with_monster(self, monster_id: str) -> list[str]:
-        """Зворотний пошук: у яких пригодах зустрічається монстр."""
+    async def adventures_with_monster(self, monster_id: str, limit: int = 20) -> list[tuple[str, str]]:
+        """Зворотний пошук: у яких пригодах зустрічається монстр.
+
+        Граф зберігає ідентифікатори й назви (таблиця 4.5), тож повертаються
+        пари (adventure_id, title).
+        """
         ...
 
     async def co_authors(self, author_id: str) -> list[str]:
         ...
 
-    async def campaign_chain(self, setting_id: str, level_from: int, level_to: int) -> list[str]:
-        """Послідовність пригод без повторення ключових монстрів (група 6)."""
+    async def seen_together(self, monster_id: str, limit: int = 10) -> list[tuple[str, int]]:
+        """Монстри, що трапляються разом у реальних боях: обхід
+        «монстр — зустріч — монстр» із кількістю спільних боїв (група 8)."""
+        ...
+
+    async def campaign_chain(
+        self, setting_id: str, level_from: int, level_to: int, through: str | None = None
+    ) -> list[str]:
+        """Послідовність пригод одного світу без повторення монстрів (група 6).
+
+        Шаблон шляху змінної довжини за ребрами продовження з умовами на
+        вузли: неперервні рівні в межах [level_from, level_to], жодного
+        спільного монстра. `through` — пригода, через яку має пройти ланцюжок.
+        """
         ...
 
     async def merge_nodes_and_edges(self, batch: Sequence[dict]) -> int:
@@ -198,6 +237,15 @@ class CacheStore(Protocol):
         """Черга останніх N елементів — стрічка запитів на панелі."""
         ...
 
+    async def heartbeat(self, group: str, member: str, window_seconds: int) -> int:
+        """Позначає учасника групи живим і повертає кількість учасників, що
+        подавали сигнал протягом останніх `window_seconds` секунд.
+
+        Застарілі позначки видаляються тією самою атомарною операцією, тож
+        аварійно зупинений екземпляр перестає враховуватися через вікно (п. 4.8).
+        """
+        ...
+
 
 # --------------------------------------------------------------------------
 # Джерела, черга, метрики, якість даних
@@ -216,8 +264,8 @@ class DocumentSource(Protocol):
     def name(self) -> str:
         ...
 
-    async def stream(self, batch_size: int = 500) -> AsyncIterator[list[dict]]:
-        """Асинхронний потік пакетів сирих документів."""
+    async def stream(self, batch_size: int = 500) -> AsyncIterator[SourceBatch]:
+        """Асинхронний потік пакетів сирих документів зі звітом джерела (SourceBatch)."""
         ...
 
     async def set_rate(self, documents_per_second: int) -> None:

@@ -1,0 +1,42 @@
+[
+  {
+    "name": "Independent (self-published)",
+    "weight": 0.55
+  },
+  {
+    "name": "Wizards of the Coast",
+    "weight": 0.1
+  },
+  {
+    "name": "Kobold Press",
+    "weight": 0.07
+  },
+  {
+    "name": "Ghostfire Gaming",
+    "weight": 0.05
+  },
+  {
+    "name": "MCDM Productions",
+    "weight": 0.05
+  },
+  {
+    "name": "The Arcane Library",
+    "weight": 0.05
+  },
+  {
+    "name": "Goodman Games",
+    "weight": 0.04
+  },
+  {
+    "name": "Necrotic Gnome",
+    "weight": 0.04
+  },
+  {
+    "name": "Free League Publishing",
+    "weight": 0.03
+  },
+  {
+    "name": "Paizo",
+    "weight": 0.02
+  }
+]

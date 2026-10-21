@@ -26,5 +26,8 @@ USER app
 
 ENV LOG_DIR=/app/logs
 
+# Порт процесу API (у Compose відкрито лише на 127.0.0.1)
+EXPOSE 8000
+
 ENTRYPOINT ["python", "-m", "workers.launcher"]
 CMD ["storage-check"]

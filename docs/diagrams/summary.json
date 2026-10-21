@@ -1,31 +1,31 @@
 {
-  "modules": 54,
+  "modules": 55,
   "groups": 23,
-  "classes": 133,
+  "classes": 142,
   "classes_by_kind": {
-    "adapter": 21,
+    "adapter": 24,
     "config": 4,
-    "controller": 7,
-    "dto": 15,
+    "controller": 9,
+    "dto": 16,
     "entity": 15,
     "enum": 6,
-    "error": 5,
+    "error": 6,
     "handler": 13,
     "inbound": 10,
     "outbound": 13,
     "process": 6,
     "service": 5,
     "spec": 1,
-    "value": 12
+    "value": 14
   },
   "relations_by_kind": {
     "association": 7,
-    "composition": 22,
-    "dependency": 61,
+    "composition": 27,
+    "dependency": 67,
     "generalization": 16,
     "realization": 28,
     "reference": 11,
-    "use": 90
+    "use": 110
   },
   "realizations": [
     "AdventureFilters ..|> SearchSpecification",
@@ -57,5 +57,5 @@
     "RedisMetricsAdapter ..|> MetricsSink",
     "SearchIndexAdapter ..|> SearchIndex"
   ],
-  "date": "28.09.2026"
+  "date": "21.10.2026"
 }

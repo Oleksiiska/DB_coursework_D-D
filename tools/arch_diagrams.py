@@ -14,7 +14,7 @@
 
 Використання:
     python tools/arch_diagrams.py --out docs/diagrams --plantuml plantuml.jar
-    python tools/arch_diagrams.py --date 28.09.2026 --no-render
+    python tools/arch_diagrams.py --date 24.09.2026 --no-render
 """
 
 from __future__ import annotations

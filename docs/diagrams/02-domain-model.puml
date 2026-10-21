@@ -11,7 +11,7 @@ skinparam HeaderFontSize 10
 hide empty members
 
 header
-станом на 28.09.2026 · побудовано з вихідного коду
+станом на 21.10.2026 · побудовано з вихідного коду
 endheader
 
 left to right direction
@@ -51,11 +51,14 @@ Encounter *-- "1" Provenance
 Monster *-- "1" Provenance
 Monster *-- "1" StatBlock
 MonsterParticipation *-- "1" HitPoints
+MonsterParticipation *-- "1" Provenance
 PlayerCharacter *-- "*" ClassLevel
 PlayerCharacter *-- "1" CombatPayload
 PlayerCharacter *-- "1" HitPoints
 PlayerCharacter *-- "1" Provenance
+Setting *-- "1" Provenance
 StatBlock *-- "*" Ability
+Tag *-- "1" Provenance
 HitPoints --> "0..1" HpStatus
 Provenance --> "1" SourceOrigin
 SearchLogEntry --> "1" DocumentKind

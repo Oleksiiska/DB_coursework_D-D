@@ -1,0 +1,46 @@
+# Конфігурація журналів усіх процесів застосунку (п. 4.10, таблиця 4.17).
+#
+# Файл монтується в контейнери лише для читання (таблиця 3.7): щоб змінити
+# рівень, відредагуйте його й перезапустіть контейнер або задайте змінну
+# середовища LOG_LEVEL — вона перекриває рівень кореневого журналу.
+# Замість {process} композиційний корінь підставляє ім'я процесу, а для
+# масштабованих generator та ingest-worker — ще й ім'я контейнера, тож
+# кожен екземпляр пише у власний файл.
+#
+# Журнали поділено за підсистемами: launcher, api, search, ingest, generator,
+# crawler, csv-loader, storage-check і db з дочірніми db.mongo, db.es,
+# db.neo4j, db.redis. Рівні: ERROR — критичні збої; WARNING — те, що має
+# насторожити; INFO — корисна статистика; DEBUG — тривалість звернень до
+# сховищ, тіло запиту до пошукового рушія, ключ кешу, explain кожного
+# сотого запиту до шардованої колекції.
+version: 1
+disable_existing_loggers: false
+formatters:
+  plain:
+    format: "%(asctime)s %(levelname)-7s %(name)s: %(message)s"
+handlers:
+  console:
+    class: logging.StreamHandler
+    formatter: plain
+    stream: ext://sys.stdout
+  file:
+    class: logging.handlers.RotatingFileHandler
+    formatter: plain
+    filename: /app/logs/{process}.log
+    maxBytes: 10485760
+    backupCount: 5
+    encoding: utf-8
+loggers:
+  db: {level: INFO}          # DEBUG — тривалість звернень до сховищ
+  crawler: {level: INFO}
+  # сторонні бібліотеки — лише попередження
+  pymongo: {level: WARNING}
+  neo4j: {level: WARNING}
+  elastic_transport: {level: WARNING}
+  elasticsearch: {level: WARNING}
+  httpx: {level: WARNING}
+  httpcore: {level: WARNING}
+  uvicorn.access: {level: WARNING}
+root:
+  level: INFO
+  handlers: [console, file]

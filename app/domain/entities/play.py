@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import ClassVar
 
-from app.domain.values import HpStatus, Provenance
+from app.domain.values import HpStatus, Provenance, SourceOrigin
 
 
 @dataclass(slots=True)
@@ -37,7 +37,7 @@ class CombatPayload:
     """
 
     attacks: list[str] = field(default_factory=list)
-    abilities: list[str] = field(default_factory=list)
+    actions: list[str] = field(default_factory=list)
     effects: list[str] = field(default_factory=list)
 
 
@@ -62,19 +62,29 @@ class PlayerCharacter:
     spells: list[str] = field(default_factory=list)
     spells_srd: list[str] = field(default_factory=list)
 
-    combat: CombatPayload = field(default_factory=CombatPayload)
+    combat_payload: CombatPayload = field(default_factory=CombatPayload)
     encounter_ids: list[str] = field(default_factory=list)
     controller_hash: str | None = None
 
     @property
     def is_multiclass(self) -> bool:
-        raise NotImplementedError
+        """Мультиклас — кілька пар «клас — рівень» (у джерелі роздільник /)."""
+        return len(self.classes_all) > 1
 
     def validate(self) -> list[str]:
-        raise NotImplementedError
+        """Обов'язкові: name і char_class — ознака персонажа гравця (п. 2.5.2)."""
+        reasons: list[str] = []
+        if not self.name:
+            reasons.append("name: обов'язкове поле")
+        if not self.char_class:
+            reasons.append("char_class: обов'язкове поле")
+        if self.level is not None and self.level < 1:
+            reasons.append("level: менше 1")
+        return reasons
 
     def knows_spell(self, spell_name: str) -> bool:
-        raise NotImplementedError
+        wanted = spell_name.strip().lower()
+        return any(spell.lower() == wanted for spell in self.spells)
 
 
 @dataclass(slots=True)
@@ -94,11 +104,13 @@ class MonsterParticipation:
     monster_id: str | None = None
     monster_name_raw: str | None = None
     hp: HitPoints = field(default_factory=HitPoints)
+    #: Записи участі надходять лише з підготовлених CSV (таблиця А.11)
+    provenance: Provenance = field(default_factory=lambda: Provenance(origin=SourceOrigin.CSV))
 
     @property
     def is_resolved(self) -> bool:
         """Чи зіставлено з довідником (49,7% учасників без класу)."""
-        raise NotImplementedError
+        return self.monster_id is not None
 
 
 @dataclass(slots=True)
@@ -124,9 +136,19 @@ class Encounter:
     #: Поріг відсікання викидів (п. 2.5.6): бої понад 8 годин — покинуті сесії
     ABANDONED_THRESHOLD_SECONDS: ClassVar[int] = 8 * 3600
 
+    #: Команди, що свідчать про бойову зустріч (п. 2.5.7)
+    COMBAT_COMMANDS: ClassVar[frozenset[str]] = frozenset({"init attack", "cast"})
+
     def validate(self) -> list[str]:
         """Обов'язкові: encounter_id, started_at."""
-        raise NotImplementedError
+        reasons: list[str] = []
+        if not self.encounter_id:
+            reasons.append("encounter_id: обов'язкове поле")
+        if self.started_at is None:
+            reasons.append("started_at: обов'язкове поле")
+        if self.duration_seconds is not None and self.duration_seconds < 0:
+            reasons.append("duration_seconds: від'ємна тривалість")
+        return reasons
 
     def detect_abandoned(self) -> bool:
         """Ознака покинутої сесії.
@@ -134,8 +156,14 @@ class Encounter:
         Медіана тривалості 12,7 хв, максимум — 50 031 хв (34 доби).
         Такі записи зберігаються, але виключаються зі статистики.
         """
-        raise NotImplementedError
+        return self.duration_seconds is not None and self.duration_seconds > self.ABANDONED_THRESHOLD_SECONDS
 
     def is_combat_heavy(self) -> bool:
-        """Класифікація за складом команд, без аналізу тексту (п. 2.5.7)."""
-        raise NotImplementedError
+        """Класифікація за складом команд, без аналізу тексту (п. 2.5.7).
+
+        Наявність init attack і cast свідчить про бойову зустріч, переважання
+        check — про соціальну або дослідницьку.
+        """
+        combat = sum(1 for command in self.commands if command in self.COMBAT_COMMANDS)
+        checks = sum(1 for command in self.commands if command == "check")
+        return combat > 0 and combat >= checks

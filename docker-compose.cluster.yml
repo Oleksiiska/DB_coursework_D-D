@@ -1,0 +1,269 @@
+# Повна топологія системи (таблиця 3.7): шардований кластер документного
+# сховища, пошуковий індекс, графове сховище, Redis і процеси застосунку.
+# Докладно — README, розділ «Повна топологія: шардований кластер».
+#
+#   docker compose -f docker-compose.cluster.yml up --build -d
+#
+# Інтерфейс і API — http://127.0.0.1:8000. Генератор і процес запису
+# масштабуються збільшенням кількості контейнерів:
+#   docker compose -f docker-compose.cluster.yml up -d --scale generator=3 --scale ingest-worker=2
+#
+# Сховища доступні лише в мережі backend; назовні відкрито тільки
+# маршрутизатор mongos і API на 127.0.0.1 (таблиця 4.8). Тому автентифікацію
+# сховищ у цьому локальному стенді вимкнено. Файл config/logging.yaml
+# змонтовано в усі контейнери застосунку лише для читання (п. 4.10).
+name: dnd-cluster
+
+# Вузол MongoDB: кеш WiredTiger обмежено, бо чотири процеси mongod
+# працюють на одній машині й інакше кожен претендував би на половину пам'яті
+x-mongod: &mongod
+  image: mongo:8.0
+  networks: [backend]
+
+# Процес застосунку: той самий образ, що й у docker-compose.yml
+x-app: &app
+  build: .
+  image: dnd-adventures-app:0.1
+  user: "${APP_UID:-1000}:${APP_GID:-1000}"
+  networks: [backend]
+  volumes:
+    - ./logs:/app/logs
+    - ./config:/app/config:ro
+
+x-app-env: &app-env
+  MONGO_URI: mongodb://mongos:27017
+  MONGO_DATABASE: dnd
+  SEARCH_URL: http://elasticsearch:9200
+  GRAPH_URI: bolt://neo4j:7687
+  CACHE_URL: redis://redis:6379
+  QUEUE_URL: redis://redis:6379
+  SHARD_COUNT: "3"
+  LOG_DIR: /app/logs
+  # порожнє значення — рівні з config/logging.yaml; LOG_LEVEL=DEBUG перекриває кореневий
+  LOG_LEVEL: ${LOG_LEVEL:-}
+  QUEUE_LIMIT: "50"
+  DEFAULT_RATE: "100"
+
+services:
+  # ---------------- документне сховище: шардований кластер ----------------
+
+  mongo-config:
+    <<: *mongod
+    command: ["mongod", "--configsvr", "--replSet", "cfg", "--port", "27019",
+              "--bind_ip_all", "--wiredTigerCacheSizeGB", "0.25"]
+    volumes:
+      - config-data:/data/configdb
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--port", "27019", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+
+  mongo-shard-1:
+    <<: *mongod
+    command: ["mongod", "--shardsvr", "--replSet", "shard1", "--port", "27018",
+              "--bind_ip_all", "--wiredTigerCacheSizeGB", "0.25"]
+    volumes:
+      - shard1-data:/data/db
+    healthcheck: &shard-health
+      test: ["CMD", "mongosh", "--quiet", "--port", "27018", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+
+  mongo-shard-2:
+    <<: *mongod
+    command: ["mongod", "--shardsvr", "--replSet", "shard2", "--port", "27018",
+              "--bind_ip_all", "--wiredTigerCacheSizeGB", "0.25"]
+    volumes:
+      - shard2-data:/data/db
+    healthcheck: *shard-health
+
+  mongo-shard-3:
+    <<: *mongod
+    command: ["mongod", "--shardsvr", "--replSet", "shard3", "--port", "27018",
+              "--bind_ip_all", "--wiredTigerCacheSizeGB", "0.25"]
+    volumes:
+      - shard3-data:/data/db
+    healthcheck: *shard-health
+
+  # Маршрутизатор приймає з'єднання, коли набір реплік сервера
+  # конфігурації ініціалізовано, тож стає здоровим після mongo-init
+  mongos:
+    <<: *mongod
+    command: ["mongos", "--configdb", "cfg/mongo-config:27019", "--port", "27017", "--bind_ip_all"]
+    ports:
+      - "127.0.0.1:${MONGOS_PORT:-27017}:27017"
+    depends_on:
+      mongo-config:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 20s
+
+  # Одноразове налаштування: набори реплік, шарди, зони, шардування
+  # колекції пригод. Повторний запуск нічого не змінює.
+  mongo-init:
+    <<: *mongod
+    command: ["mongosh", "--nodb", "--quiet", "/scripts/mongo-init.js"]
+    volumes:
+      - ./docker/mongo-init.js:/scripts/mongo-init.js:ro
+    depends_on:
+      mongo-config:
+        condition: service_healthy
+      mongo-shard-1:
+        condition: service_healthy
+      mongo-shard-2:
+        condition: service_healthy
+      mongo-shard-3:
+        condition: service_healthy
+      mongos:
+        condition: service_started
+
+  # ---------------- пошуковий індекс, граф, черга й кеш ----------------
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.5.5
+    networks: [backend]
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s' || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
+
+  neo4j:
+    image: neo4j:5.26
+    networks: [backend]
+    environment:
+      NEO4J_AUTH: none
+      NEO4J_server_memory_heap_max__size: 512m
+      NEO4J_server_memory_pagecache_size: 256m
+    volumes:
+      - neo4j-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  # Черга пакетів (Redis Streams), кеш результатів і лічильники (п. 4.7):
+  # журнал AOF зберігає непідтверджені пакети після перезапуску; межа пам'яті
+  # 256 МБ із політикою volatile-lru витісняє лише ключі з часом життя —
+  # записи кешу й посекундні кошики, а не чергу й лічильники
+  redis:
+    image: redis:7.4
+    networks: [backend]
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "volatile-lru"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # ---------------- процеси застосунку ----------------
+
+  # Перевірка запису й читання (п. 4.2); працює з кластером через mongos
+  # так само, як з одним вузлом
+  storage-check:
+    <<: *app
+    command: ["storage-check"]
+    environment: *app-env
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+      mongos:
+        condition: service_healthy
+
+  # REST API, потік статистики SSE і статична сторінка інтерфейсу (п. 4.9)
+  api:
+    <<: *app
+    entrypoint: ["python", "-m", "app.main"]
+    environment: *app-env
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    depends_on: &all-stores
+      mongo-init:
+        condition: service_completed_successfully
+      mongos:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Підготовлені CSV (таблиця 2.3) і світи зі списку вручну; завершується
+  # після останнього файлу
+  csv-loader:
+    <<: *app
+    command: ["csv"]
+    environment:
+      <<: *app-env
+      CSV_DIR: /app/csv
+      CSV_RATE: ${CSV_RATE:-1000}
+    volumes:
+      - ./logs:/app/logs
+      - ./config:/app/config:ro
+      - ${CSV_HOST_DIR:-./data/csv}:/app/csv:ro
+    depends_on: &queue-only
+      redis:
+        condition: service_healthy
+
+  # Генератор (×N): частка r = R / N цільової швидкості з інтерфейсу; з каталогу
+  # CSV — пул монстрів, словник тегів і корпус текстів
+  generator:
+    <<: *app
+    command: ["generator"]
+    environment:
+      <<: *app-env
+      CSV_DIR: /app/csv
+    volumes:
+      - ./logs:/app/logs
+      - ./config:/app/config:ro
+      - ${CSV_HOST_DIR:-./data/csv}:/app/csv:ro
+    depends_on: *queue-only
+
+  # Краулер каталогу itch.io (бонусна частина): сталий User-Agent, затримка
+  # 1,5–3 с, robots.txt; завершується після повного обходу
+  crawler:
+    <<: *app
+    command: ["crawler"]
+    environment:
+      <<: *app-env
+      CRAWLER_TAG: ${CRAWLER_TAG:-dnd}
+    depends_on: *queue-only
+
+  # Процес запису (×N): черга → три сховища → підтвердження пакета
+  ingest-worker:
+    <<: *app
+    command: ["ingest"]
+    environment: *app-env
+    depends_on: *all-stores
+
+networks:
+  backend:
+
+volumes:
+  config-data:
+  shard1-data:
+  shard2-data:
+  shard3-data:
+  es-data:
+  neo4j-data:
+  redis-data:

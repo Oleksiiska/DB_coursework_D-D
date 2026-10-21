@@ -39,8 +39,10 @@ class SearchUseCase(Protocol):
     """Повнотекстовий пошук (групи запитів 1, 2, 3, 6, 9).
 
     Один контракт — шаблон `CachedSearchHandler` і три його нащадки:
-    пошук пригод, монстрів і зустрічей. З групи 6 обслуговує складений
-    запит із фільтрами («без додаткових книг, на трьох гравців, на вечір»).
+    пошук пригод, монстрів і зустрічей. Зі складеного запиту групи 6
+    накладає обмеження за кількістю гравців і тривалістю («на трьох
+    гравців, кожна — на один вечір»), а ланцюжок будує
+    GetRecommendationsUseCase (п. 3.3.1).
     """
 
     async def handle(self, query: SearchQueryDTO) -> SearchResultDTO:
@@ -57,7 +59,8 @@ class GetAdventureCardUseCase(Protocol):
 
 @runtime_checkable
 class GetMonsterCardUseCase(Protocol):
-    """Картка монстра з переліком пригод, де він зустрічається (групи 4, 5)."""
+    """Картка монстра з переліком пригод, де він зустрічається, і монстрами,
+    що трапляються з ним у тих самих боях (групи 4, 5, 8)."""
 
     async def handle(self, monster_id: str) -> MonsterCardDTO:
         ...
@@ -84,9 +87,11 @@ class GetRecommendationsUseCase(Protocol):
     """Рекомендації та ланцюжок кампанії (групи 6, 8)."""
 
     async def handle(self, adventure_id: str, limit: int = 10) -> list[RecommendationDTO]:
+        """Схожі пригоди за спільними тегами й монстрами."""
         ...
 
     async def campaign_chain(self, query: CampaignQueryDTO) -> list[RecommendationDTO]:
+        """Послідовність пригод одного світу без повторів монстрів."""
         ...
 
 
@@ -119,6 +124,8 @@ class IngestDocumentUseCase(Protocol):
 
 @runtime_checkable
 class ConfigureRateUseCase(Protocol):
+    """Зміна й читання цільової сумарної швидкості генерації (п. 3.6.3)."""
+
     async def handle(self, setting: RateSettingDTO) -> RateSettingDTO:
         ...
 
@@ -136,7 +143,7 @@ QUERY_GROUP_COVERAGE: dict[int, tuple[type, ...]] = {
     5: (GetAuthorCardUseCase, GetMonsterCardUseCase),
     6: (GetRecommendationsUseCase, SearchUseCase),
     7: (GetPlayStatisticsUseCase,),
-    8: (GetRecommendationsUseCase,),
+    8: (GetRecommendationsUseCase, GetMonsterCardUseCase),
     9: (SearchUseCase,),
     10: (GetLiveStatsUseCase,),
 }

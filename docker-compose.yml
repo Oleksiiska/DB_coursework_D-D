@@ -30,9 +30,11 @@ services:
       MONGO_URI: mongodb://mongo:27017
       MONGO_DATABASE: dnd
       LOG_DIR: /app/logs
-      LOG_LEVEL: INFO
+      # порожнє значення — рівень із config/logging.yaml (п. 4.10)
+      LOG_LEVEL: ${LOG_LEVEL:-}
     volumes:
       - ./logs:/app/logs
+      - ./config:/app/config:ro
     networks: [backend]
     depends_on:
       mongo:

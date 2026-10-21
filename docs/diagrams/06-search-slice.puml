@@ -11,7 +11,7 @@ skinparam HeaderFontSize 10
 hide empty members
 
 header
-станом на 28.09.2026 · побудовано з вихідного коду
+станом на 21.10.2026 · побудовано з вихідного коду
 endheader
 
 left to right direction
@@ -33,6 +33,7 @@ class SearchResultDTO <<DTO>> #E2D8F3 {
   +cache_hit: bool
   +latency_ms: int
   +normalized_query: str
+  +tag_counts: dict[str, int]
 }
 interface SearchUseCase <<вхідний порт>> #E2D8F3 {
   +handle(query): SearchResultDTO
@@ -54,6 +55,7 @@ interface CacheStore <<вихідний порт>> #D2EADF {
   +delete(key): bool
   +incr(key, amount): int
   +push_capped(key, value, max_length)
+  +heartbeat(group, member, window_seconds): int
 }
 interface CrudRepository <<вихідний порт>> #D2EADF {
   +get(entity_id): T | None
@@ -77,7 +79,8 @@ interface SearchIndex <<вихідний порт>> #D2EADF {
 }
 class QueryNormalizer <<служба>> #D2EADF {
   +normalize(raw): str
-  +cache_key(kind, raw, spec): str
+  +search_text(raw): str
+  +cache_key(kind, raw, spec, page, sort): str
   +is_empty(raw): bool
 }
 class MongoCrudRepository <<адаптер>> #E1E1E1
@@ -99,7 +102,6 @@ SearchController --> "3" SearchUseCase : adventures\nmonsters\nencounters
 CachedSearchHandler ..> SearchQueryDTO
 CachedSearchHandler ..> SearchResultDTO
 SearchAdventuresHandler ..> AdventureCardDTO
-SearchController ..> SearchResultDTO
 SearchUseCase ..> SearchQueryDTO
 SearchUseCase ..> SearchResultDTO
 legend right

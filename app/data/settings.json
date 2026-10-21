@@ -1,0 +1,158 @@
+[
+  {
+    "setting_id": "0c2306f4-cb41-539a-8087-4e7984429f6f",
+    "slug": "forgotten-realms",
+    "name": "Forgotten Realms",
+    "description": "The Sword Coast and the wider continent of Faerûn: bustling cities such as Waterdeep and Baldur's Gate, ancient ruins, and a crowded pantheon of active gods. The default setting of fifth-edition adventures, with room for every kind of story.",
+    "genre": "high fantasy",
+    "tone": "heroic",
+    "related_setting_ids": [
+      "27e04ef8-49d1-5fc9-8823-ec5a62c10ff5",
+      "164dfd5b-3f58-52f2-8593-4e6e6afcfd44",
+      "1c085195-05d2-5191-a04d-57477d7f15b0"
+    ]
+  },
+  {
+    "setting_id": "99dac3b7-1995-55df-8aac-be9befe0bdc9",
+    "slug": "eberron",
+    "name": "Eberron",
+    "description": "A world recovering from the Last War, where lightning rails and airships run on bound elementals. Pulp action and noir intrigue between rival nations, dragonmarked houses and secret societies.",
+    "genre": "magitech fantasy",
+    "tone": "noir",
+    "related_setting_ids": [
+      "a82b2849-210a-57a8-b6a2-0e6440cc2022",
+      "f4e5d3bf-505a-5bb5-a7b8-92703230d3a7"
+    ]
+  },
+  {
+    "setting_id": "1c085195-05d2-5191-a04d-57477d7f15b0",
+    "slug": "greyhawk",
+    "name": "Greyhawk",
+    "description": "The original campaign world of Oerth, centred on the Free City of Greyhawk. Classic dungeon delving, scheming wizards and morally grey factions.",
+    "genre": "sword and sorcery",
+    "tone": "gritty",
+    "related_setting_ids": [
+      "b1a1dd0e-7b2b-5d70-8012-452542638ddc",
+      "0c2306f4-cb41-539a-8087-4e7984429f6f"
+    ]
+  },
+  {
+    "setting_id": "b2f4c659-700f-5b5c-8e9a-935ad58b69d3",
+    "slug": "ravenloft",
+    "name": "Ravenloft",
+    "description": "The Domains of Dread, pocket realms in the Shadowfell, each ruled and imprisoned by its Darklord. Investigation, dread and tragedy rather than glory.",
+    "genre": "gothic horror",
+    "tone": "dark",
+    "related_setting_ids": [
+      "f4e5d3bf-505a-5bb5-a7b8-92703230d3a7",
+      "a9d1815d-46df-5ddb-b962-5eddfee669ed"
+    ]
+  },
+  {
+    "setting_id": "cfe98fe9-c436-5c70-b64c-1222812b10a7",
+    "slug": "dark-sun",
+    "name": "Dark Sun",
+    "description": "The desert world of Athas, ruined by defiling magic and ruled by sorcerer-kings. Water is scarce, metal is rare and survival comes first.",
+    "genre": "post-apocalyptic fantasy",
+    "tone": "grim",
+    "related_setting_ids": [
+      "1c085195-05d2-5191-a04d-57477d7f15b0"
+    ]
+  },
+  {
+    "setting_id": "f4e5d3bf-505a-5bb5-a7b8-92703230d3a7",
+    "slug": "planescape",
+    "name": "Planescape",
+    "description": "Sigil, the City of Doors, sits at the centre of the multiverse, where philosophical factions argue about the nature of reality. Portals lead to every plane of existence.",
+    "genre": "planar fantasy",
+    "tone": "weird",
+    "related_setting_ids": [
+      "27e04ef8-49d1-5fc9-8823-ec5a62c10ff5",
+      "b2f4c659-700f-5b5c-8e9a-935ad58b69d3",
+      "99dac3b7-1995-55df-8aac-be9befe0bdc9"
+    ]
+  },
+  {
+    "setting_id": "27e04ef8-49d1-5fc9-8823-ec5a62c10ff5",
+    "slug": "spelljammer",
+    "name": "Spelljammer",
+    "description": "Ships sail through Wildspace and the Astral Sea between crystal spheres. Swashbuckling voyages, strange crews and pirates among the stars.",
+    "genre": "space fantasy",
+    "tone": "whimsical",
+    "related_setting_ids": [
+      "f4e5d3bf-505a-5bb5-a7b8-92703230d3a7",
+      "0c2306f4-cb41-539a-8087-4e7984429f6f"
+    ]
+  },
+  {
+    "setting_id": "50d41b7d-bc76-500c-9f1f-8a990539bc17",
+    "slug": "dragonlance",
+    "name": "Dragonlance",
+    "description": "The world of Krynn, torn by the War of the Lance. Dragon armies, legendary heroes and a struggle between good, evil and neutrality.",
+    "genre": "epic fantasy",
+    "tone": "epic",
+    "related_setting_ids": [
+      "0c2306f4-cb41-539a-8087-4e7984429f6f",
+      "164dfd5b-3f58-52f2-8593-4e6e6afcfd44"
+    ]
+  },
+  {
+    "setting_id": "164dfd5b-3f58-52f2-8593-4e6e6afcfd44",
+    "slug": "exandria",
+    "name": "Exandria",
+    "description": "The world of Tal'Dorei and Wildemount, shaped by a calamitous war between gods. Rival empires, frontier towns and dunamancy magic.",
+    "genre": "high fantasy",
+    "tone": "heroic",
+    "related_setting_ids": [
+      "0c2306f4-cb41-539a-8087-4e7984429f6f",
+      "50d41b7d-bc76-500c-9f1f-8a990539bc17"
+    ]
+  },
+  {
+    "setting_id": "a9d1815d-46df-5ddb-b962-5eddfee669ed",
+    "slug": "theros",
+    "name": "Theros",
+    "description": "A land inspired by Greek myth, where gods depend on the devotion of mortals. Heroes chase glory and destiny under the eyes of the pantheon.",
+    "genre": "mythic fantasy",
+    "tone": "mythic",
+    "related_setting_ids": [
+      "a82b2849-210a-57a8-b6a2-0e6440cc2022",
+      "b2f4c659-700f-5b5c-8e9a-935ad58b69d3"
+    ]
+  },
+  {
+    "setting_id": "a82b2849-210a-57a8-b6a2-0e6440cc2022",
+    "slug": "ravnica",
+    "name": "Ravnica",
+    "description": "A city that covers an entire world, governed by ten rival guilds. Politics, crime and investigation among towering spires and crowded streets.",
+    "genre": "urban fantasy",
+    "tone": "intrigue",
+    "related_setting_ids": [
+      "99dac3b7-1995-55df-8aac-be9befe0bdc9",
+      "a9d1815d-46df-5ddb-b962-5eddfee669ed",
+      "13b725bc-2216-545d-8b7c-9cd3dfaa89ec"
+    ]
+  },
+  {
+    "setting_id": "13b725bc-2216-545d-8b7c-9cd3dfaa89ec",
+    "slug": "strixhaven",
+    "name": "Strixhaven",
+    "description": "A university of magic with five rival colleges. Exams, clubs, rivalries and a mystery beneath the campus.",
+    "genre": "academy fantasy",
+    "tone": "lighthearted",
+    "related_setting_ids": [
+      "a82b2849-210a-57a8-b6a2-0e6440cc2022"
+    ]
+  },
+  {
+    "setting_id": "b1a1dd0e-7b2b-5d70-8012-452542638ddc",
+    "slug": "mystara",
+    "name": "Mystara",
+    "description": "The Known World of the classic Basic and Expert rules: a patchwork of nations from the Grand Duchy of Karameikos to the Hollow World beneath.",
+    "genre": "classic fantasy",
+    "tone": "adventurous",
+    "related_setting_ids": [
+      "1c085195-05d2-5191-a04d-57477d7f15b0"
+    ]
+  }
+]

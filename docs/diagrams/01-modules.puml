@@ -11,7 +11,7 @@ skinparam HeaderFontSize 10
 hide empty members
 
 header
-станом на 28.09.2026 · побудовано з вихідного коду
+станом на 21.10.2026 · побудовано з вихідного коду
 endheader
 
 skinparam componentStyle rectangle
@@ -49,13 +49,16 @@ package "infrastructure — адаптери" #F4F4F4 {
   component "sources" as m_infrastructure_sources
 }
 m_application_commands --> m_application_dto
+m_application_commands --> m_domain_entities
 m_application_commands --> m_domain_ports
 m_application_commands --> m_domain_services
 m_application_commands --> m_domain_values
+m_application_dto --> m_domain_errors
 m_application_dto --> m_domain_values
 m_application_ports --> m_application_dto
 m_application_queries --> m_application_dto
 m_application_queries --> m_domain_entities
+m_application_queries --> m_domain_errors
 m_application_queries --> m_domain_ports
 m_application_queries --> m_domain_services
 m_application_queries --> m_domain_values
@@ -78,11 +81,14 @@ m_infrastructure_sources <-- m_infrastructure_config
 m_domain_values <-- m_infrastructure_messaging
 m_domain_entities <-- m_infrastructure_persistence
 m_domain_values <-- m_infrastructure_persistence
+m_domain_values <-- m_infrastructure_sources
 m_presentation_rest --> m_application_dto
 m_presentation_rest --> m_application_ports
+m_presentation_rest --> m_presentation_stream
 m_presentation_stream --> m_application_dto
 m_presentation_stream --> m_application_ports
 m_processes_api --> m_infrastructure_config
+m_processes_api --> m_presentation_rest
 m_processes_crawler_worker --> m_domain_ports
 m_processes_csv_loader --> m_domain_ports
 m_processes_csv_loader --> m_domain_values
@@ -98,6 +104,7 @@ m_processes_launcher --> m_processes_ingest_worker
 m_processes_launcher --> m_processes_storage_check
 m_processes_storage_check --> m_domain_entities
 m_processes_storage_check --> m_domain_ports
+m_processes_storage_check --> m_domain_services
 m_processes_storage_check --> m_domain_values
 m_application_ports <|.. m_application_commands
 m_application_ports <|.. m_application_queries

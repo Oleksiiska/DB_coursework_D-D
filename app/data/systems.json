@@ -1,0 +1,99 @@
+[
+  {
+    "system": "Dungeons & Dragons",
+    "edition": "5e (2014)",
+    "core_books": [
+      "Player's Handbook (2014)",
+      "Dungeon Master's Guide (2014)",
+      "Monster Manual (2014)"
+    ],
+    "aliases": [
+      "5e",
+      "d&d 5e",
+      "dnd 5e",
+      "dnd5e",
+      "fifth edition"
+    ],
+    "weight": 0.6
+  },
+  {
+    "system": "Dungeons & Dragons",
+    "edition": "5e (2024)",
+    "core_books": [
+      "Player's Handbook (2024)",
+      "Dungeon Master's Guide (2024)",
+      "Monster Manual (2025)"
+    ],
+    "aliases": [
+      "5.5e",
+      "d&d 2024",
+      "dnd 2024",
+      "one d&d",
+      "5e 2024"
+    ],
+    "weight": 0.15
+  },
+  {
+    "system": "Pathfinder",
+    "edition": "2e Remaster",
+    "core_books": [
+      "Player Core",
+      "GM Core",
+      "Monster Core"
+    ],
+    "aliases": [
+      "pf2e",
+      "pathfinder 2e",
+      "pathfinder second edition"
+    ],
+    "weight": 0.08
+  },
+  {
+    "system": "Old-School Essentials",
+    "edition": "Classic Fantasy",
+    "core_books": [
+      "Old-School Essentials Classic Fantasy: Rules Tome"
+    ],
+    "aliases": [
+      "ose",
+      "b/x",
+      "osr"
+    ],
+    "weight": 0.07
+  },
+  {
+    "system": "Shadowdark RPG",
+    "edition": "1e",
+    "core_books": [
+      "Shadowdark RPG"
+    ],
+    "aliases": [
+      "shadowdark"
+    ],
+    "weight": 0.05
+  },
+  {
+    "system": "Dungeon Crawl Classics",
+    "edition": "1e",
+    "core_books": [
+      "Dungeon Crawl Classics Role Playing Game"
+    ],
+    "aliases": [
+      "dcc",
+      "dcc rpg"
+    ],
+    "weight": 0.03
+  },
+  {
+    "system": "System-agnostic",
+    "edition": null,
+    "core_books": [],
+    "aliases": [
+      "system neutral",
+      "systemless",
+      "any system",
+      "system agnostic"
+    ],
+    "weight": 0.02
+  }
+]

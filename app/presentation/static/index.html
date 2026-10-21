@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>D&amp;D Adventures — панель моніторингу</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/chart.umd.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand">D&amp;D Adventures<small>панель моніторингу</small></div>
+    <nav class="tabs" role="tablist">
+      <button class="tab on" data-tab="monitor" role="tab">Моніторинг</button>
+      <button class="tab" data-tab="search" role="tab">Пошук</button>
+      <button class="tab" data-tab="stats" role="tab">Статистика гри</button>
+    </nav>
+    <div class="live off" id="live"><b>●</b> <span>потік SSE: підключення…</span></div>
+  </header>
+
+  <!-- Моніторинг: дані з потоку SSE /api/stats/stream, оновлення щосекунди (таблиця 4.16, рисунок 4.1) -->
+  <section class="panel on" id="tab-monitor">
+    <div class="grid2">
+      <div class="card">
+        <h3>Цільова швидкість генерації</h3>
+        <input class="slider" id="rate-slider" type="range" min="0" max="1000" step="1" aria-label="цільова швидкість">
+        <div class="ticks" id="rate-ticks"></div>
+        <div class="ratebox">
+          <input class="input" id="rate-input" type="number" min="10" max="5000" step="1">
+          <span>док/с</span>
+          <button class="btn" id="rate-apply">Застосувати</button>
+          <span class="error" id="rate-error"></span>
+          <div class="meta">фактично: <b id="rate-actual">—</b></div>
+        </div>
+        <div class="note" id="rate-note">екземплярів генератора: — · частка кожного: — · зміна діє з наступного пакета (≤ 1 с)</div>
+      </div>
+      <div class="card">
+        <h3>Краулер itch.io</h3>
+        <div class="cgrid">
+          <div><span>переглянуто сторінок</span><b id="cr-pages">0</b></div>
+          <div><span>за секунду</span><b id="cr-rate">0</b></div>
+          <div><span>помилок і тайм-аутів</span><b id="cr-errors">0</b></div>
+          <div><span>відповідей 429/503</span><b id="cr-throttled">0</b></div>
+          <div><span>заборонено robots.txt</span><b id="cr-robots">0</b></div>
+          <div><span>карток розібрано</span><b id="cr-cards">0</b></div>
+        </div>
+        <div class="small muted" id="cr-stage">затримка між запитами 1,5–3 с · поточний етап: —</div>
+      </div>
+    </div>
+
+    <div class="kpis">
+      <div class="kpi"><div class="l">Переглянуто краулером</div><div class="v" id="k-crawled">0</div><div class="s m" id="k-crawled-s">0 стор/с</div></div>
+      <div class="kpi"><div class="l">Завантажено з CSV</div><div class="v" id="k-csv">0</div><div class="s m" id="k-csv-s">рядків</div></div>
+      <div class="kpi"><div class="l">Згенеровано</div><div class="v" id="k-gen">0</div><div class="s" id="k-gen-s">0 док/с</div></div>
+      <div class="kpi"><div class="l">Збережено в БД</div><div class="v" id="k-saved">0</div><div class="s g" id="k-saved-s">0 док/с</div></div>
+      <div class="kpi"><div class="l">Відхилено</div><div class="v" id="k-rejected">0</div><div class="s m">журнал браку</div></div>
+      <div class="kpi"><div class="l">Черга пакетів</div><div class="v" id="k-queue">0 / 50</div><div class="s m" id="k-queue-s">зворотний тиск не діє</div></div>
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <h3>Навантаження за останні 60 с, док/с</h3>
+        <div class="legend">
+          <span><i style="border-top:3px dashed #111"></i>цільова</span>
+          <span><i style="border-color:#2f6fde"></i>згенеровано</span>
+          <span><i style="border-color:#1b9e5a"></i>збережено (лічильник)</span>
+          <span><i style="border-top:3px dotted #c2410c"></i>приріст у MongoDB</span>
+        </div>
+        <div class="chartbox"><canvas id="load-chart" aria-label="графік навантаження"></canvas></div>
+      </div>
+      <div class="card">
+        <h3>MongoDB: пригод на шардах (з бази, $collStats)</h3>
+        <div id="shards"><div class="muted small">немає даних</div></div>
+        <div class="dbline">
+          усього в колекції: <b id="db-total">0</b><br>
+          приріст за даними БД: <b id="db-rate">0 док/с</b><br>
+          відхилення шардів від середнього: <b id="db-dev">—</b><br>
+          <span class="muted">оновлюється щосекунди, результат кешується на 1 с</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid2" style="margin-bottom:0">
+      <div class="card">
+        <h3>Останні пошукові запити</h3>
+        <div class="sstats">
+          <span>частка влучань у кеш <b id="q-hit">—</b></span>
+          <span>медіана затримки <b id="q-p50">—</b></span>
+          <span>95-й процентиль <b id="q-p95">—</b></span>
+        </div>
+        <table>
+          <thead><tr><th>Час</th><th>Вид</th><th>Запит</th><th>Статус</th><th class="num">Результатів</th><th class="num">Затримка</th><th>Кеш</th></tr></thead>
+          <tbody id="queries"></tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h3>Заповненість полів пригод</h3>
+        <table>
+          <thead><tr><th>Поле</th><th class="num">зібрані</th><th class="num">згенеровані</th></tr></thead>
+          <tbody id="fill"></tbody>
+        </table>
+        <div class="small muted" style="margin-top:10px">частка документів із заповненим полем, за лічильниками процесу запису</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Пошук: групи запитів 1–3 і 9; картки й навігація — групи 4–6 і 8 -->
+  <section class="panel" id="tab-search">
+    <div class="card">
+      <form id="search-form" class="searchbar" autocomplete="off">
+        <input class="query" id="q" name="q" placeholder="запит англійською, напр. cursed village swamp cult">
+        <select id="kind" name="kind" aria-label="вид документа">
+          <option value="adventures">пригоди</option>
+          <option value="monsters">монстри</option>
+          <option value="encounters">зустрічі</option>
+        </select>
+        <select id="sort" name="sort" aria-label="сортування">
+          <option value="relevance">за релевантністю</option>
+          <option value="rating">за оцінкою</option>
+          <option value="reviews">за кількістю відгуків</option>
+          <option value="year">за роком</option>
+          <option value="duration">за тривалістю</option>
+        </select>
+        <button class="btn" type="submit">Знайти</button>
+        <button class="btn light" type="button" id="reset">Скинути</button>
+      </form>
+      <div class="hint">Тексти каталогу й довідника англомовні, тож запити вводяться англійською; слова зводяться до основ, порядок слів не важливий.</div>
+
+      <div class="filters" id="filters-adventures">
+        <label>рівень персонажів<input type="number" name="level" min="1" max="20"></label>
+        <label>кількість гравців<input type="number" name="players" min="1" max="12"></label>
+        <label>тривалість до, год<input type="number" name="max_duration_hours" min="1" step="0.5"></label>
+        <label>система<select name="system" id="f-system"><option value="">будь-яка</option></select></label>
+        <label>складність<select name="difficulty"><option value="">будь-яка</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label>
+        <label>ігровий світ<select name="setting_id" id="f-setting"><option value="">будь-який</option></select></label>
+        <label>теги (через кому)<input type="text" name="tags" id="f-tags" placeholder="horror, one-shot"></label>
+        <label>безкоштовність<select name="is_free"><option value="">не важливо</option><option value="true">безкоштовні</option><option value="false">платні</option></select></label>
+        <label>мова видання<select name="publication_language"><option value="">будь-яка</option><option>English</option><option>Spanish</option><option>German</option><option>French</option><option>Portuguese</option><option>Polish</option></select></label>
+        <label>рік від<input type="number" name="year_from" min="1974" max="2100"></label>
+        <label>рік до<input type="number" name="year_to" min="1974" max="2100"></label>
+      </div>
+      <div class="filters" id="filters-monsters" hidden>
+        <label>рівень партії<input type="number" name="party_level" min="1" max="20"></label>
+        <label>рівень небезпеки від<input type="number" name="challenge_min" min="0" step="0.125"></label>
+        <label>рівень небезпеки до<input type="number" name="challenge_max" min="0" step="0.125"></label>
+        <label>тип<select name="creature_type"><option value="">будь-який</option></select></label>
+        <label>середовище<select name="environment"><option value="">будь-яке</option></select></label>
+      </div>
+      <div class="filters" id="filters-encounters" hidden>
+        <label>команда<input type="text" name="command" placeholder="init attack"></label>
+        <label>раундів від<input type="number" name="min_rounds" min="0"></label>
+        <label>раундів до<input type="number" name="max_rounds" min="0"></label>
+        <label>покинуті сесії<select name="exclude_abandoned"><option value="true">виключити</option><option value="false">показувати</option></select></label>
+      </div>
+    </div>
+
+    <div class="results-head">
+      <div id="results-summary" class="muted"></div>
+    </div>
+    <div class="chips tagcounts" id="tag-counts"></div>
+    <div id="results"></div>
+    <div class="pager" id="pager"></div>
+  </section>
+
+  <!-- Статистика реальної гри: група запитів 7 -->
+  <section class="panel" id="tab-stats">
+    <div class="grid2">
+      <div class="card">
+        <h3>Найпопулярніші монстри реальних ігор</h3>
+        <div class="bars" id="st-monsters"><div class="muted small">завантаження…</div></div>
+      </div>
+      <div class="card">
+        <h3>Тривалість бою (без покинутих сесій)</h3>
+        <div class="medians" id="st-combat"><div class="muted small">завантаження…</div></div>
+        <div class="small muted" style="margin-top:10px">медіани, а не середні: розподіли містять викиди на три порядки</div>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="card">
+        <h3>Типові закляття класу й рівня</h3>
+        <div class="controls">
+          <select id="st-class" aria-label="клас"></select>
+          <input id="st-level" type="number" min="1" max="20" value="5" aria-label="рівень">
+          <button class="btn" id="st-spells-go">Показати</button>
+        </div>
+        <div class="bars" id="st-spells"></div>
+      </div>
+      <div class="card">
+        <h3>Склад партій за класами</h3>
+        <div class="bars" id="st-party"><div class="muted small">завантаження…</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Розподіл класів і рас персонажів гравців</h3>
+      <table>
+        <thead><tr><th>Клас</th><th>Раса</th><th class="num">Персонажів</th></tr></thead>
+        <tbody id="st-classrace"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <aside class="drawer" id="drawer" hidden>
+    <button class="btn light close" id="drawer-close">Закрити</button>
+    <div id="drawer-body"></div>
+  </aside>
+</div>
+</body>
+</html>
