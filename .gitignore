@@ -1,0 +1,9 @@
+# Підготовлені й завантажені дані відтворює scripts/prepare-data (README, «Підготовка даних»):
+# архів FIREBALL ≈ 7,7 ГБ, CSV — десятки МБ
+data/raw/
+data/csv/
+logs/*
+!logs/.gitkeep
+__pycache__/
+*.pyc
+.pytest_cache/

@@ -343,9 +343,22 @@ function resultHTML(item, index) {
     ${snippets || (item.narrative_excerpt ? `<div class="snippet">${esc(item.narrative_excerpt)}</div>` : "")}</div>`;
 }
 
+// Фільтр задано, якщо є будь-яке значення, крім тексту, сортування, сторінки
+// й типового «виключити покинуті сесії» — так само вирішує сервер (is_empty)
+const hasFilters = (params) => [...params.entries()].some(([k, v]) =>
+  !["q", "sort", "page"].includes(k) && !(k === "exclude_abandoned" && v === "true"));
+
 async function runSearch() {
   searchState.kind = $("kind").value;
   const params = searchParams();
+  if (!params.get("q") && !hasFilters(params)) {
+    // Порожній запит без фільтрів сервер не виконує (п. 4.6) — підказка замість «нічого не знайдено»
+    $("results-summary").textContent = "";
+    $("tag-counts").innerHTML = $("pager").innerHTML = "";
+    $("results").innerHTML = '<div class="card muted">Введіть запит англійською, наприклад «cursed village» або «dragon lair», '
+      + "чи задайте фільтр (рівень, кількість гравців, теги): запит без тексту й без фільтрів нічого не шукає.</div>";
+    return;
+  }
   $("results-summary").textContent = "пошук…";
   try {
     const result = await getJSON(`/api/search/${searchState.kind}?${params}`);

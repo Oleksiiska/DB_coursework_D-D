@@ -135,8 +135,11 @@ async def test_storage_failure_keeps_the_batch_unacknowledged() -> None:
     """П. 4.4: недоступний шард не ковтається — пакет надійде повторно."""
     repo, collection = repository(sharded=True)
     collection.bulk_errors = _bulk_errors(6)  # HostUnreachable
-    with pytest.raises(BulkWriteError):
+    with pytest.raises(ConnectionError) as raised:
         await repo.add_many([StorageCheck.sample(KEYS) for _ in range(3)])
+    # стислий опис замість повного переліку операцій із документами
+    assert str(raised.value) == "adventures: test (код 6, не записано 1 з 3)"
+    assert isinstance(raised.value.__cause__, BulkWriteError)
 
 
 async def test_document_error_does_not_stop_the_batch() -> None:

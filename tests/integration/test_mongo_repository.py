@@ -68,7 +68,7 @@ async def test_update_and_delete(repository) -> None:
 from datetime import datetime, timezone  # noqa: E402
 
 from app.domain.entities import Encounter, Monster, PlayerCharacter  # noqa: E402
-from app.domain.values import AdventureFilters, MonsterFilters, Page, Provenance, SourceOrigin  # noqa: E402
+from app.domain.values import AdventureFilters, Provenance, SourceOrigin  # noqa: E402
 
 
 @pytest.fixture
@@ -92,8 +92,8 @@ async def test_adventure_queries_and_author_stats(container) -> None:
     assert stats["a1"] == {"adventures_count": 2, "avg_rating": 4.5, "first_published_year": 2020, "co_author_ids": ["a2"]}
     assert await repository.count(AdventureFilters(level=2, tags=("horror",))) == 2
     assert await repository.count(AdventureFilters(level=7)) == 0
-    found = await repository.find_by_filters(AdventureFilters(is_free=True), Page(), __import__("app.domain.values", fromlist=["SortOrder"]).SortOrder.REVIEWS)
-    assert len(found) == 2
+    indexes = await container.documents_database().adventures.index_information()
+    assert {"author_ids_1_published_year_-1", "tags_1", "setting_id_1"} <= set(indexes)
     shards = await repository.count_by_shard()
     assert sum(shards.values()) == 2
 
@@ -108,9 +108,6 @@ async def test_play_statistics_aggregations(container) -> None:
         Monster("m2", "Owlbear", "monstrosity", 3, csv, play_count=120),
     ])
     assert [m.name for m in await monsters.most_played(1)] == ["Skeleton"]
-    assert [m.name for m in await monsters.find_by_filters(MonsterFilters(party_level=4), Page())] == ["Owlbear"]
-    await monsters.set_play_counts({"m2": 5})
-    assert (await monsters.get("m2")).play_count == 5
     await characters.add_many([
         PlayerCharacter("c1", "Aria", csv, race="Elf", char_class="Wizard", level=5, spells=["Fireball", "Shield"]),
         PlayerCharacter("c2", "Bo", csv, race="Human", char_class="Wizard", level=5, spells=["Fireball"]),

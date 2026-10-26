@@ -12,9 +12,7 @@ from typing import AsyncIterator, Generic, Sequence, TypeVar
 
 from app.domain.entities import Adventure, SearchLogEntry
 from app.domain.values import (
-    AdventureFilters,
     DocumentKind,
-    Page,
     QueuedBatch,
     SearchHits,
     SearchSpecification,
@@ -74,17 +72,8 @@ class InMemoryAdventureRepository(InMemoryRepository[Adventure]):
     def __init__(self, items: list[Adventure] | None = None) -> None:
         super().__init__("adventure_id", items)
 
-    async def find_by_filters(
-        self, filters: AdventureFilters, page: Page, sort: SortOrder = SortOrder.RELEVANCE
-    ) -> list[Adventure]:
-        found = [a for a in self._items.values() if a.matches(filters)]
-        return found[page.offset : page.offset + page.size]
-
     async def find_by_author(self, author_id: str, limit: int = 50) -> list[Adventure]:
         return [a for a in self._items.values() if author_id in a.author_ids][:limit]
-
-    async def find_chain(self, setting_id: str, level_from: int, level_to: int) -> list[Adventure]:
-        return []
 
     async def count_by_shard(self) -> dict[str, int]:
         return {"shard1": len(self._items)}

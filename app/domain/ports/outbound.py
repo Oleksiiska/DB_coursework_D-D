@@ -11,8 +11,6 @@ from typing import AsyncIterator, Protocol, Sequence, TypeVar, runtime_checkable
 
 from app.domain.entities import Adventure, Encounter, Monster, PlayerCharacter, SearchLogEntry
 from app.domain.values import (
-    AdventureFilters,
-    MonsterFilters,
     Page,
     QueuedBatch,
     SearchHits,
@@ -67,17 +65,8 @@ class CrudRepository(Protocol[T]):
 class AdventureRepository(CrudRepository[Adventure], Protocol):
     """Репозиторій пригод — шардована колекція."""
 
-    async def find_by_filters(
-        self, filters: AdventureFilters, page: Page, sort: SortOrder = SortOrder.RELEVANCE
-    ) -> list[Adventure]:
-        ...
-
     async def find_by_author(self, author_id: str, limit: int = 50) -> list[Adventure]:
         """Інші роботи автора (група запитів 5), від новіших."""
-        ...
-
-    async def find_chain(self, setting_id: str, level_from: int, level_to: int) -> list[Adventure]:
-        """Пригоди світу, чий діапазон рівнів перетинає заданий, за зростанням рівня."""
         ...
 
     async def count_by_shard(self) -> dict[str, int]:
@@ -102,26 +91,9 @@ class AdventureRepository(CrudRepository[Adventure], Protocol):
 
 @runtime_checkable
 class MonsterRepository(CrudRepository[Monster], Protocol):
-    async def find_by_filters(self, filters: MonsterFilters, page: Page) -> list[Monster]:
-        """Підбір за рівнем небезпеки та середовищем за індексами документного сховища.
-
-        Видачу групи запитів 3 будує пошуковий індекс (SearchMonstersHandler),
-        бо там фільтр поєднується з текстом в одному запиті.
-        """
-        ...
-
     async def most_played(self, limit: int = 20) -> list[Monster]:
-        """Найпопулярніші монстри реальних ігор (група запитів 7)."""
-        ...
-
-    async def set_play_counts(self, counts: dict[str, int]) -> None:
-        """Записує кількість появ, перераховану за записами участі.
-
-        Під час завантаження play_count надходить у monsters.csv (крок 3
-        таблиці 2.4); метод перезаписує значення після повторної підготовки
-        записів участі. Значення встановлюється, а не додається: повторний
-        виклик не подвоює лічильників.
-        """
+        """Найпопулярніші монстри реальних ігор (група запитів 7); play_count
+        надходить у monsters.csv (крок 3 таблиці 2.4)."""
         ...
 
 

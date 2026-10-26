@@ -57,6 +57,18 @@ def test_builtin_config_and_level_override(tmp_path, restore_logging) -> None:
     assert path == tmp_path / "api.log" and logging.getLogger().level == logging.DEBUG
 
 
+def test_level_override_reaches_application_loggers_but_not_libraries(tmp_path, restore_logging) -> None:
+    """LOG_LEVEL=DEBUG вмикає тривалість звернень до сховищ (журнал db, у файлі
+    закріплений на INFO), а журнали драйверів лишаються на WARNING."""
+    LoggingConfigurator(tmp_path, process="ingest-worker", config_path=CONFIG).configure("DEBUG")
+    assert logging.getLogger("db.mongo").isEnabledFor(logging.DEBUG)
+    assert logging.getLogger("crawler").isEnabledFor(logging.DEBUG)
+    assert not logging.getLogger("pymongo").isEnabledFor(logging.INFO)
+    assert not logging.getLogger("neo4j.io").isEnabledFor(logging.INFO)
+    LoggingConfigurator(tmp_path, process="ingest-worker", config_path=CONFIG).configure()
+    assert not logging.getLogger("db.mongo").isEnabledFor(logging.DEBUG)
+
+
 def test_scaled_processes_write_own_files(tmp_path, restore_logging) -> None:
     settings = Settings(log_dir=str(tmp_path), log_config=str(tmp_path / "none.yaml"), hostname="c0ffee")
     assert Container(settings).configure_logging("ingest").name == "ingest-worker-c0ffee.log"

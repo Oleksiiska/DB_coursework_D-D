@@ -23,9 +23,7 @@ from app.domain.values import (
     AdventureFilters,
     EncounterFilters,
     MonsterFilters,
-    Page,
     SearchSpecification,
-    SortOrder,
 )
 
 T = TypeVar("T")
@@ -259,7 +257,7 @@ class MongoCrudRepository(Generic[T]):
             return f"{stats.get('executionTimeMillis', '?')} мс"
         return ", ".join(
             f"{shard.get('shardName', '?')} {shard.get('executionTimeMillis', shard.get('executionTimeMillisEstimate', '?'))} мс"
-            for shard in shards
+            for shard in sorted(shards, key=lambda s: str(s.get("shardName", "")))
         )
 
     async def add(self, entity: T) -> None:
@@ -271,8 +269,9 @@ class MongoCrudRepository(Generic[T]):
 
         Помилка окремого документа (повтор ключа, невалідний документ) не
         зупиняє решту пакета. Збій самого сховища — недоступний шард,
-        невиконана вимога підтвердження запису — піднімається вище: пакет
-        лишається непідтвердженим і надходить повторно, а не губиться (п. 4.4).
+        невиконана вимога підтвердження запису — піднімається вище як
+        ConnectionError зі стислим описом: пакет лишається непідтвердженим і
+        надходить повторно, а не губиться (п. 4.4).
         """
         from pymongo import ReplaceOne
         from pymongo.errors import BulkWriteError
@@ -292,10 +291,17 @@ class MongoCrudRepository(Generic[T]):
         except BulkWriteError as error:
             details = error.details
             errors = details.get("writeErrors", [])
-            if details.get("writeConcernErrors") or any(
-                e.get("code") not in self.DOCUMENT_ERROR_CODES for e in errors
-            ):
-                raise
+            failures = details.get("writeConcernErrors") or [
+                e for e in errors if e.get("code") not in self.DOCUMENT_ERROR_CODES
+            ]
+            if failures:
+                # Збій сховища, а не документа: стисле повідомлення замість повного
+                # переліку операцій із документами, який займав би сотні кілобайтів журналу
+                first = failures[0]
+                raise ConnectionError(
+                    f"{self._collection}: {first.get('errmsg', 'помилка запису')} "
+                    f"(код {first.get('code')}, не записано {len(errors) or len(operations)} з {len(operations)})"
+                ) from error
             log.warning("%s: документів не записано: %d", self._collection, len(errors))
             return details.get("nMatched", 0) + details.get("nUpserted", 0)
 
@@ -327,22 +333,13 @@ class MongoAdventureRepository(MongoCrudRepository[Adventure]):
     функцію ключа розподілу."""
 
     COLLECTION = "adventures"
+    #: Роботи автора від новіших і статистика авторів; кількості пригод
+    #: тегу й світу для похідних лічильників (п. 4.11)
     INDEXES = (
-        ([("author_ids", 1)], {}),
+        ([("author_ids", 1), ("published_year", -1)], {}),
         ([("tags", 1)], {}),
-        ([("setting_id", 1), ("levels.minimum", 1)], {}),
-        ([("published_year", -1)], {}),
+        ([("setting_id", 1)], {}),
     )
-    #: Порядок видачі в документному сховищі; релевантності тут немає,
-    #: тож за замовчуванням — від новіших за роком публікації (п. 4.6)
-    SORT_FIELDS: dict[SortOrder, tuple[str, int]] = {
-        SortOrder.RELEVANCE: ("published_year", -1),
-        SortOrder.RATING: ("rating_avg", -1),
-        SortOrder.REVIEWS: ("reviews_count", -1),
-        SortOrder.YEAR: ("published_year", -1),
-        SortOrder.DURATION: ("duration_hours", 1),
-    }
-
     def _build_query(self, spec: SearchSpecification) -> dict[str, Any]:
         if not isinstance(spec, AdventureFilters):
             raise TypeError(f"adventures: очікувалися AdventureFilters, отримано {type(spec).__name__}")
@@ -369,30 +366,8 @@ class MongoAdventureRepository(MongoCrudRepository[Adventure]):
             query["published_year"] = years
         return query
 
-    async def find_by_filters(
-        self, filters: AdventureFilters, page: Page, sort: SortOrder = SortOrder.RELEVANCE
-    ) -> list[Adventure]:
-        field_name, direction = self.SORT_FIELDS[sort]
-        pipeline: list[dict[str, Any]] = [{"$match": self._build_query(filters) if not filters.is_empty() else {}}]
-        if field_name == "reviews_count":
-            pipeline.append({"$addFields": {"reviews_count": {"$size": {"$ifNull": ["$reviews", []]}}}})
-        pipeline += [{"$sort": {field_name: direction, "_id": 1}}, {"$skip": page.offset}, {"$limit": page.size}]
-        if field_name == "reviews_count":
-            pipeline.append({"$unset": "reviews_count"})
-        cursor = await self._documents.aggregate(pipeline)
-        return [self._mapper.to_entity(document) for document in await cursor.to_list()]
-
     async def find_by_author(self, author_id: str, limit: int = 50) -> list[Adventure]:
         cursor = self._documents.find({"author_ids": author_id}).sort([("published_year", -1), ("_id", 1)]).limit(limit)
-        return [self._mapper.to_entity(document) for document in await cursor.to_list()]
-
-    async def find_chain(self, setting_id: str, level_from: int, level_to: int) -> list[Adventure]:
-        query = {
-            "setting_id": setting_id,
-            "levels.minimum": {"$lte": level_to},
-            "levels.maximum": {"$gte": level_from},
-        }
-        cursor = self._documents.find(query).sort([("levels.minimum", 1), ("_id", 1)]).limit(500)
         return [self._mapper.to_entity(document) for document in await cursor.to_list()]
 
     async def count_by_shard(self) -> dict[str, int]:
@@ -461,10 +436,8 @@ class MongoAdventureRepository(MongoCrudRepository[Adventure]):
 
 class MongoMonsterRepository(MongoCrudRepository[Monster]):
     COLLECTION = "monsters"
-    INDEXES = (
-        ([("play_count", -1)], {}),
-        ([("challenge_rating", 1)], {}),
-    )
+    #: Найпопулярніші монстри (група 7)
+    INDEXES = (([("play_count", -1)], {}),)
 
     def _build_query(self, spec: SearchSpecification) -> dict[str, Any]:
         if not isinstance(spec, MonsterFilters):
@@ -480,31 +453,15 @@ class MongoMonsterRepository(MongoCrudRepository[Monster]):
             query["environment"] = spec.environment
         return query
 
-    async def find_by_filters(self, filters: MonsterFilters, page: Page) -> list[Monster]:
-        query = {} if filters.is_empty() else self._build_query(filters)
-        cursor = self._documents.find(query).sort([("challenge_rating", 1), ("_id", 1)]).skip(page.offset).limit(page.size)
-        return [self._mapper.to_entity(document) for document in await cursor.to_list()]
-
     async def most_played(self, limit: int = 20) -> list[Monster]:
         cursor = self._documents.find({}).sort([("play_count", -1), ("_id", 1)]).limit(limit)
         return [self._mapper.to_entity(document) for document in await cursor.to_list()]
 
-    async def set_play_counts(self, counts: dict[str, int]) -> None:
-        from pymongo import UpdateOne
-
-        if counts:
-            await self._documents.bulk_write(
-                [UpdateOne({"_id": monster_id}, {"$set": {"play_count": count}}) for monster_id, count in counts.items()],
-                ordered=False,
-            )
-
 
 class MongoCharacterRepository(MongoCrudRepository[PlayerCharacter]):
     COLLECTION = "characters"
-    INDEXES = (
-        ([("char_class", 1), ("level", 1)], {}),
-        ([("race", 1)], {}),
-    )
+    #: Типові закляття класу й рівня (група 7)
+    INDEXES = (([("char_class", 1), ("level", 1)], {}),)
 
     async def typical_spells(self, char_class: str, level: int, limit: int = 10) -> list[tuple[str, int]]:
         """Агрегація по вкладеному масиву заклять."""
@@ -529,7 +486,6 @@ class MongoCharacterRepository(MongoCrudRepository[PlayerCharacter]):
 
 class MongoEncounterRepository(MongoCrudRepository[Encounter]):
     COLLECTION = "encounters"
-    INDEXES = (([("is_abandoned", 1)], {}),)
 
     def _build_query(self, spec: SearchSpecification) -> dict[str, Any]:
         if not isinstance(spec, EncounterFilters):

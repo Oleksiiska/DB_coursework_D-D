@@ -211,7 +211,7 @@ class GraphAdapter:
         for kind, rows in groups.items():
             started = time.perf_counter()
             await self._driver.execute_query(MERGE_QUERIES[kind], rows=rows, database_=self._database)
-            log.debug("merge %s: %d вузлів — %.0f мс", kind, len(rows), (time.perf_counter() - started) * 1000)
+            log.debug("merge %s %d док. — %.0f мс", kind, len(rows), (time.perf_counter() - started) * 1000)
             edges += sum(self._edges_of(kind, row) for row in rows)
         return edges
 

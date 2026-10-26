@@ -1,0 +1,32 @@
+# Офлайн-підготовка даних (розділ 2, таблиця 2.4, кроки 1–4): завантаження
+# 5e SRD і FIREBALL, обхід каталогу itch.io, CSV таблиці 2.3, перевірка CSV
+# моделлю застосунку і звіт вимірювань. Докладно — README, розділ «Підготовка даних».
+#
+#   docker compose -f docker-compose.prepare.yml build
+#   docker compose -f docker-compose.prepare.yml run --rm prepare [параметри]
+#
+# Той самий образ, що й у кластері. Код підготовки (tools/) до образу не
+# входить (таблиця 4.6) і монтується лише для читання. Результат — data/csv
+# (його читає csv-loader кластера) і data/csv/measurements.md; завантажені
+# датасети та знімок обходу — data/raw (≈ 8 ГБ, потрібні лише для повторної підготовки).
+name: dnd-prepare
+
+services:
+  prepare:
+    build: .
+    image: dnd-adventures-app:0.1
+    # На Linux, якщо ваш UID не 1000: APP_UID=$(id -u) APP_GID=$(id -g) (скрипти задають самі)
+    user: "${APP_UID:-1000}:${APP_GID:-1000}"
+    entrypoint: ["python", "-m", "tools.prepare"]
+    environment:
+      CSV_DIR: /app/data/csv
+      RAW_DIR: /app/data/raw
+      LOG_DIR: /app/logs
+      # порожнє значення — зафіксована адреса архіву FIREBALL (tools/prepare/sources.py)
+      FIREBALL_URL: ${FIREBALL_URL:-}
+      # порожнє значення — повний обхід каталогу; число — випадкова вибірка карток
+      CATALOG_SAMPLE: ${CATALOG_SAMPLE:-}
+    volumes:
+      - ./tools:/app/tools:ro
+      - ./data:/app/data
+      - ./logs:/app/logs

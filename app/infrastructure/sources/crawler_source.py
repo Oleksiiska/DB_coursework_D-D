@@ -159,12 +159,18 @@ class CrawlerSource:
         policy: PolitenessPolicy,
         systems: list[dict] | None = None,
         client_factory: Callable[[], Any] | None = None,
+        card_limit: int | None = None,
+        sample_seed: int | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._tag = tag
         self._policy = policy
         self._systems = systems or []
         self._client_factory = client_factory or self._default_client
+        #: Випадкова вибірка карток замість повного обходу (офлайн-вимірювання, п. 2.9):
+        #: списки обходяться повністю, а картки — лише card_limit із відтворюваним зерном
+        self._card_limit = card_limit
+        self._sample_seed = sample_seed
         self._rate = 1
 
     @property
@@ -172,7 +178,13 @@ class CrawlerSource:
         return "crawler"
 
     async def stream(self, batch_size: int = 20) -> AsyncIterator[SourceBatch]:
-        """Повний обхід: списки → картки → профілі авторів → сторінки тегів."""
+        """Повний обхід: списки → картки → профілі авторів → сторінки тегів.
+
+        Документи публікуються пакетами по batch_size, а звіт джерела — після
+        кожної сторінки: інакше лічильники зростали б раз на 20 сторінок
+        (близько 50 с), і посекундна швидкість краулера на панелі між
+        пакетами показувала б нуль (п. 4.9).
+        """
         counters = _Counters()
         async with self._client_factory() as client:
             await self._load_robots(client, counters)
@@ -185,6 +197,8 @@ class CrawlerSource:
                 counters.discovered += 1
                 counters.completed += 1
                 if html is None:
+                    # звіт про останню сторінку списку — до етапу карток, а не в ньому
+                    yield SourceBatch([], counters.flush())
                     break
                 page_links, page_categories = parse_list_page(html, self._base_url)
                 categories.update(page_categories)
@@ -194,6 +208,7 @@ class CrawlerSource:
                 if not fresh:
                     break
 
+            links = self._sample(links)
             counters.stage = "cards"
             counters.discovered = len(links)
             authors: dict[str, str] = {}
@@ -209,6 +224,8 @@ class CrawlerSource:
                 if len(documents) >= batch_size:
                     yield SourceBatch(documents, counters.flush())
                     documents = []
+                else:
+                    yield SourceBatch([], counters.flush())
             if documents or counters.requested:
                 yield SourceBatch(documents, counters.flush())
 
@@ -226,6 +243,8 @@ class CrawlerSource:
                 if len(documents) >= batch_size:
                     yield SourceBatch(documents, counters.flush())
                     documents = []
+                else:
+                    yield SourceBatch([], counters.flush())
             if documents:
                 yield SourceBatch(documents, counters.flush())
 
@@ -242,9 +261,19 @@ class CrawlerSource:
                 if len(documents) >= batch_size:
                     yield SourceBatch(documents, counters.flush())
                     documents = []
+                else:
+                    yield SourceBatch([], counters.flush())
             if documents or counters.requested:
                 yield SourceBatch(documents, counters.flush())
         log.info("обхід завершено: карток %d, авторів %d, тегів %d", len(links), len(authors), len(tags))
+
+    def _sample(self, links: dict[str, CardLink]) -> dict[str, CardLink]:
+        """Вибірка карток у порядку списку; без card_limit — усі картки."""
+        if self._card_limit is None or len(links) <= self._card_limit:
+            return links
+        chosen = set(random.Random(self._sample_seed).sample(sorted(links), self._card_limit))
+        log.info("вибірка: %d карток із %d (зерно %s)", len(chosen), len(links), self._sample_seed)
+        return {url: link for url, link in links.items() if url in chosen}
 
     async def set_rate(self, documents_per_second: int) -> None:
         """Для краулера — верхня межа, що не перевищує ввічливої затримки:

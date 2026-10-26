@@ -1,0 +1,4 @@
+# Скрипти запуску: bash — з LF (інакше не виконуються в Linux і macOS),
+# PowerShell — з CRLF і BOM, як їх зберігає Windows PowerShell 5.1
+*.sh  text eol=lf
+*.ps1 text eol=crlf

@@ -220,3 +220,34 @@ def test_requirements_pin_the_stack_of_table_4_11() -> None:
                     "httpx==", "beautifulsoup4==", "lxml==", "PyYAML=="):
         assert package in text, package
     assert "locust==" in (PROJECT / "requirements-dev.txt").read_text(encoding="utf-8")
+
+
+def test_long_running_processes_restart_after_failure() -> None:
+    """Таблиця 4.10: api, generator й ingest-worker перезапускаються після
+    аварійного завершення — наприклад, якщо шард був недоступний під час старту."""
+    import yaml
+
+    services = yaml.safe_load((PROJECT / "docker-compose.cluster.yml").read_text(encoding="utf-8"))["services"]
+    for name in ("api", "generator", "ingest-worker"):
+        assert services[name].get("restart") == "on-failure", name
+    for name in ("csv-loader", "crawler", "storage-check"):
+        assert "restart" not in services[name], name
+
+
+def test_data_preparation_runs_in_the_application_image_without_entering_it() -> None:
+    """Таблиці 2.4 і 4.6: офлайн-підготовка (кроки 1–4) виконується в тому
+    самому образі, але код tools/ до образу не входить і монтується лише для
+    читання; результат — каталог, який читає csv-loader кластера."""
+    import yaml
+
+    prepare = yaml.safe_load((PROJECT / "docker-compose.prepare.yml").read_text(encoding="utf-8"))["services"]["prepare"]
+    cluster = yaml.safe_load((PROJECT / "docker-compose.cluster.yml").read_text(encoding="utf-8"))
+    assert prepare["image"] == cluster["services"]["csv-loader"]["image"]
+    assert prepare["entrypoint"] == ["python", "-m", "tools.prepare"]
+    assert "./tools:/app/tools:ro" in prepare["volumes"] and "./data:/app/data" in prepare["volumes"]
+    assert prepare["environment"]["CSV_DIR"] == "/app/data/csv"
+    assert "${CSV_HOST_DIR:-./data/csv}:/app/csv:ro" in cluster["services"]["csv-loader"]["volumes"]
+    ignored = (PROJECT / ".dockerignore").read_text(encoding="utf-8").split()
+    assert {"tools", "data", "scripts"} <= set(ignored)
+    for script in ("prepare-data", "setup", "start", "load-csv", "stop"):
+        assert (PROJECT / "scripts" / f"{script}.ps1").is_file() and (PROJECT / "scripts" / f"{script}.sh").is_file()

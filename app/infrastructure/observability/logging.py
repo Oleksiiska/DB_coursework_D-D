@@ -20,8 +20,11 @@ class LoggingConfigurator:
     для читання; композиційний корінь читає його під час старту процесу й
     налаштовує журнали функцією logging.config.dictConfig. За відсутності
     файлу діє вбудована конфігурація рівня INFO з тим самим форматом.
-    Змінна середовища LOG_LEVEL, якщо задана, перекриває рівень кореневого
-    журналу. Замість {process} у назві файлу підставляється ім'я процесу.
+    Змінна середовища LOG_LEVEL, якщо задана, перекриває рівні кореневого
+    журналу й усіх журналів застосунку з файлу (db, crawler та інших), але не
+    сторонніх бібліотек: LOG_LEVEL=DEBUG вмикає тривалість звернень до
+    сховищ, а pymongo, neo4j й інші лишаються на WARNING. Замість {process}
+    у назві файлу підставляється ім'я процесу.
     """
 
     LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
@@ -56,8 +59,16 @@ class LoggingConfigurator:
                 handler["filename"] = str(path)
         if level:
             config.setdefault("root", {})["level"] = level
+            for name, logger in config.get("loggers", {}).items():
+                if not self._is_quiet(name):
+                    logger["level"] = level
         logging.config.dictConfig(config)
         return path
+
+    @classmethod
+    def _is_quiet(cls, name: str) -> bool:
+        """Журнал сторонньої бібліотеки або його дочірній журнал."""
+        return any(name == quiet or name.startswith(quiet + ".") for quiet in cls.QUIET_LOGGERS)
 
     def get_logger(self, name: str) -> logging.Logger:
         return logging.getLogger(name)

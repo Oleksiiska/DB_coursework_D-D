@@ -39,7 +39,8 @@ x-app-env: &app-env
   QUEUE_URL: redis://redis:6379
   SHARD_COUNT: "3"
   LOG_DIR: /app/logs
-  # порожнє значення — рівні з config/logging.yaml; LOG_LEVEL=DEBUG перекриває кореневий
+  # порожнє значення — рівні з config/logging.yaml; LOG_LEVEL=DEBUG перекриває рівні
+  # журналів застосунку, зокрема db (тривалість звернень до сховищ)
   LOG_LEVEL: ${LOG_LEVEL:-}
   QUEUE_LIMIT: "50"
   DEFAULT_RATE: "100"
@@ -193,6 +194,8 @@ services:
   api:
     <<: *app
     entrypoint: ["python", "-m", "app.main"]
+    # процес, що впав через тимчасову недоступність сховища, перезапускається
+    restart: on-failure
     environment: *app-env
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
@@ -230,6 +233,7 @@ services:
   generator:
     <<: *app
     command: ["generator"]
+    restart: on-failure
     environment:
       <<: *app-env
       CSV_DIR: /app/csv
@@ -253,6 +257,7 @@ services:
   ingest-worker:
     <<: *app
     command: ["ingest"]
+    restart: on-failure
     environment: *app-env
     depends_on: *all-stores
 

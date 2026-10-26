@@ -150,3 +150,41 @@ def test_synthetic_author_pool_is_the_same_in_every_instance() -> None:
     first, second = GeneratorSource.synthetic_authors(50, 1.0), GeneratorSource.synthetic_authors(50, 1.0)
     assert first == second and first[0]["weight"] > first[-1]["weight"]
     assert first[0]["author_id"] == DocumentKind.AUTHOR.natural_id(first[0]["name"])
+
+
+async def test_crawler_reports_every_page_but_publishes_documents_in_batches(monkeypatch) -> None:
+    """Звіт джерела надходить після кожної сторінки, тож швидкість краулера на
+    панелі не падає до нуля між пакетами документів (п. 4.9)."""
+    links = [crawler_source.CardLink(f"https://itch.io/c{i}") for i in range(5)]
+    monkeypatch.setattr(crawler_source, "parse_list_page", lambda html, base: (links, {}))
+
+    class OfflineCrawler(CrawlerSource):
+        async def _load_robots(self, client, counters):
+            return None
+
+        async def _fetch(self, client, url, counters):
+            counters.requested += 1
+            if "page=2" in url:
+                return None
+            counters.succeeded += 1
+            return "<html></html>"
+
+        async def _card(self, client, link, counters):
+            await self._fetch(client, link.url, counters)
+            return crawler_source.ParsedCard({"kind": "adventure", "itch_id": link.url})
+
+    class NoClient:
+        async def __aenter__(self):
+            return None
+
+        async def __aexit__(self, *exc):
+            return False
+
+    source = OfflineCrawler("https://itch.io", "dnd", PolitenessPolicy(), client_factory=NoClient)
+    batches = [batch async for batch in source.stream(batch_size=2)]
+    cards = [b for b in batches if b.stats.stage == "cards"]
+    assert [len(b.documents) for b in cards] == [0, 2, 0, 2, 0, 1]
+    assert [b.stats.completed for b in cards] == [1, 1, 1, 1, 1, 0]
+    assert sum(b.stats.succeeded for b in cards) == 5
+    lists = [b for b in batches if b.stats.stage == "lists"]
+    assert [b.stats.completed for b in lists] == [1, 1]  # остання сторінка списку не потрапляє до карток

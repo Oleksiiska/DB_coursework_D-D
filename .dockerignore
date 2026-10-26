@@ -9,6 +9,7 @@ logs
 docs
 tests
 tools
+scripts
 config
 data
 *.zip
