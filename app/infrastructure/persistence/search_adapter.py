@@ -93,6 +93,11 @@ class SearchIndexAdapter:
                  "pre_tags": ["<mark>"], "post_tags": ["</mark>"]}
     #: Запит з одного-двох слів вимагає всіх слів, довший — трьох чвертей
     MINIMUM_SHOULD_MATCH = "2<75%"
+    #: Допуск помилок: слова до 4 літер — точно, 5–7 літер — одна помилка, довші — дві;
+    #: перша літера має збігатися. Із типовим AUTO (одна помилка вже з 3 літер, дві — з 6)
+    #: «cave» знаходив «have» і «save», «ambush» — «bushes», «breath» — «reach»
+    FUZZINESS = "AUTO:5,8"
+    FUZZY_PREFIX = 1
     TAG_BUCKETS = 30
 
     def __init__(self, client: Any, index_name: str, kind: str | None = None) -> None:
@@ -133,7 +138,7 @@ class SearchIndexAdapter:
 
     def build_query(self, text: str, spec: SearchSpecification, page: Page, sort: SortOrder) -> dict[str, Any]:
         """Тіло запиту (п. 4.6): multi_match best_fields за полями з вагами,
-        допуск помилок AUTO, minimum_should_match «2<75%», фільтри в контексті
+        допуск помилок AUTO:5,8 без зміни першої літери, minimum_should_match «2<75%», фільтри в контексті
         filter, сортування, сторінка з 20 результатів, агрегація terms за
         тегами й підсвічування. Без тексту — match_all із тими самими
         фільтрами й сортуванням за замовчуванням для виду документа."""
@@ -141,7 +146,8 @@ class SearchIndexAdapter:
         if text.strip():
             must: dict[str, Any] = {"multi_match": {
                 "query": text, "type": "best_fields", "fields": fields,
-                "fuzziness": "AUTO", "minimum_should_match": self.MINIMUM_SHOULD_MATCH,
+                "fuzziness": self.FUZZINESS, "prefix_length": self.FUZZY_PREFIX,
+                "minimum_should_match": self.MINIMUM_SHOULD_MATCH,
             }}
         else:
             must = {"match_all": {}}
@@ -163,7 +169,13 @@ class SearchIndexAdapter:
         return body
 
     async def index_many(self, documents: Sequence[dict]) -> int:
-        """Пакетна індексація; повторна індексація того самого ключа перезаписує документ."""
+        """Пакетна індексація; повторна індексація того самого ключа перезаписує документ.
+
+        Як і в основному сховищі, помилка окремого документа (відповідь 4xx —
+        значення не відповідає відображенню поля) не зупиняє решту пакета, а
+        перевантаження чи збій рушія (429, 5xx) піднімається як ConnectionError:
+        пакет лишається непідтвердженим і надходить повторно.
+        """
         from elasticsearch.helpers import async_bulk
 
         if not documents:
@@ -179,7 +191,19 @@ class SearchIndexAdapter:
             for document in documents
         ]
         started = time.perf_counter()
-        success, _ = await async_bulk(self._client, actions, chunk_size=500, raise_on_error=True)
+        success, errors = await async_bulk(self._client, actions, chunk_size=500, raise_on_error=False)
+        if errors:
+            items = [next(iter(error.values()), {}) for error in errors]
+            transient = [item for item in items if item.get("status", 500) >= 500 or item.get("status") == 429]
+            if transient:
+                first = transient[0]
+                raise ConnectionError(
+                    f"{self._index_name}: {(first.get('error') or {}).get('type', 'помилка індексації')} "
+                    f"(код {first.get('status')}, не проіндексовано {len(errors)} з {len(actions)})"
+                )
+            first = items[0]
+            log.warning("%s: документів не проіндексовано: %d (%s: %s)", self._index_name, len(errors),
+                        first.get("_id"), (first.get("error") or {}).get("reason", "помилка документа"))
         log.debug("%s: проіндексовано %d — %.0f мс", self._index_name, success, (time.perf_counter() - started) * 1000)
         return success
 

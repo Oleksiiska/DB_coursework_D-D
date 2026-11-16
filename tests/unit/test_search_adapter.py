@@ -11,7 +11,8 @@ def test_text_query_follows_section_4_6() -> None:
     body = SearchIndexAdapter(None, "adventures_idx").build_query(
         "cult cursed swamp villages", AdventureFilters(level=3, tags=("horror",)), Page(number=2), SortOrder.RELEVANCE)
     match = body["query"]["bool"]["must"][0]["multi_match"]
-    assert match["type"] == "best_fields" and match["fuzziness"] == "AUTO" and match["minimum_should_match"] == "2<75%"
+    assert match["type"] == "best_fields" and match["minimum_should_match"] == "2<75%"
+    assert (match["fuzziness"], match["prefix_length"]) == ("AUTO:5,8", 1)
     assert match["fields"] == ["title^3", "hook^2", "synopsis^2", "location_names", "full_text", "reviews.text"]
     assert {"range": {"level_min": {"lte": 3}}} in body["query"]["bool"]["filter"]
     assert {"term": {"tags": "horror"}} in body["query"]["bool"]["filter"]
@@ -56,3 +57,27 @@ def test_highlights_become_positions() -> None:
     snippets = SearchIndexAdapter(None, "adventures_idx")._parse_highlights(
         {"synopsis": ["a <mark>cursed</mark> old <mark>village</mark>"]})
     assert snippets[0].text == "a cursed old village" and snippets[0].highlights == ((2, 8), (13, 20))
+
+
+async def test_document_error_skips_the_document_but_engine_failure_keeps_the_batch(monkeypatch) -> None:
+    """Як в основному сховищі: 4xx — помилка документа (пакет пишеться далі),
+    429 і 5xx — збій рушія (пакет лишається непідтвердженим)."""
+    import elasticsearch.helpers
+    import pytest
+
+    outcome: dict = {}
+
+    async def fake_bulk(client, actions, chunk_size, raise_on_error):
+        assert raise_on_error is False
+        actions = list(actions)
+        return len(actions) - len(outcome["errors"]), outcome["errors"]
+
+    monkeypatch.setattr(elasticsearch.helpers, "async_bulk", fake_bulk)
+    adapter = SearchIndexAdapter(None, "encounters_idx")
+    documents = [{"id": f"e{i}", "narrative_text": "x"} for i in range(3)]
+    outcome["errors"] = [{"index": {"_id": "e1", "status": 400,
+                                    "error": {"type": "mapper_parsing_exception", "reason": "bad"}}}]
+    assert await adapter.index_many(documents) == 2
+    outcome["errors"] = [{"index": {"_id": "e1", "status": 429, "error": {"type": "es_rejected_execution_exception"}}}]
+    with pytest.raises(ConnectionError, match="код 429"):
+        await adapter.index_many(documents)

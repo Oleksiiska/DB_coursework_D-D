@@ -22,7 +22,9 @@ from pathlib import Path
 from typing import Any
 
 from app.domain.values import DocumentKind
-from app.infrastructure.sources.crawler_source import CrawlerSource, PolitenessPolicy, parse_list_page
+from app.infrastructure.sources.crawler_source import (
+    TAG_CATEGORY_HEADINGS, CrawlerSource, PolitenessPolicy, json_ld_product, parse_list_page,
+)
 from app.infrastructure.sources.generator_source import calibrate_author_pool
 from tools.prepare.csvio import CsvTable
 from tools.prepare.report import Measurements, number, share, top
@@ -40,7 +42,9 @@ TAG_COLUMNS = ("name", "description", "category")
 
 #: Мітки таблиці картки поза моделлю (п. 2.6.5)
 EXTRA_LABELS = ("content", "links", "asset license", "mentions", "accessibility", "publisher", "multiplayer")
-_CURRENCY = re.compile(r"(\$|£|€|USD|GBP|EUR)")
+_CURRENCY = re.compile(r"(CA\$|\$|£|€|USD|GBP|EUR|CAD)")
+#: Символ валюти кнопки купівлі → код ISO 4217, як у offers.priceCurrency JSON-LD
+_CURRENCY_CODES = {"$": "USD", "£": "GBP", "€": "EUR", "CA$": "CAD"}
 
 
 # --------------------------------------------------------------------------
@@ -228,7 +232,7 @@ def write_csv(result: CatalogResult, out_dir: Path) -> dict[str, int]:
 
 
 def card_details(html: str) -> dict[str, Any]:
-    """Мітки таблиці картки, сира мітка Average session і символ валюти —
+    """Мітки таблиці картки, сира мітка Average session і код валюти (ISO 4217) —
     те, чого документ пригоди вже не містить."""
     from bs4 import BeautifulSoup
 
@@ -239,14 +243,33 @@ def card_details(html: str) -> dict[str, Any]:
         if len(cells) >= 2:
             labels[cells[0].get_text(" ", strip=True).lower()] = cells[1].get_text(" ", strip=True)
     currency = None
+    offers = (json_ld_product(soup) or {}).get("offers")
+    if isinstance(offers, list):
+        offers = offers[0] if offers else None
+    if isinstance(offers, dict) and offers.get("priceCurrency"):
+        return {"labels": labels, "currency": str(offers["priceCurrency"]).upper()}
     for selector in ("span[itemprop=price]", ".price_value", ".buy_row .dollars", ".buy_message"):
         element = soup.select_one(selector)
         if element is not None:
             match = _CURRENCY.search(element.get_text(" ", strip=True))
             if match:
-                currency = {"USD": "$", "GBP": "£", "€": "EUR"}.get(match.group(1), match.group(1))
+                currency = _CURRENCY_CODES.get(match.group(1), match.group(1))
                 break
     return {"labels": labels, "currency": currency}
+
+
+def sidebar_diagnostics(html: str) -> dict[str, Any]:
+    """Що з бічного фільтра є в HTML першої сторінки списку: заголовки груп
+    тегів (п. 2.6.5), посилання на теги поза картками й скільки тегів отримали групу."""
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "lxml")
+    headings = [h for h in TAG_CATEGORY_HEADINGS
+                if soup.find(string=re.compile(rf"^\s*{h}\s*$")) is not None]
+    outside = [a for a in soup.find_all("a", href=re.compile(r"/tag-"))
+               if a.find_parent("div", class_="game_cell") is None]
+    return {"headings": headings, "tag_links": len(outside), "categories": len(parse_list_page(html, "https://itch.io")[1]),
+            "examples": list(dict.fromkeys(a.get_text(" ", strip=True) for a in outside))[:8]}
 
 
 @dataclass(slots=True)
@@ -259,6 +282,8 @@ class _SnapshotScan:
     per_page: int | None = None
     discovered: set[str] = field(default_factory=set)
     cards: list[dict] = field(default_factory=list)
+    #: Що є на першій сторінці списку замість бічного фільтра, якщо груп тегів не знайдено
+    sidebar: dict[str, Any] = field(default_factory=dict)
 
 
 def _scan_snapshot(path: Path | None, tag: str, crawled: set[str]) -> _SnapshotScan:
@@ -288,6 +313,7 @@ def _scan_snapshot(path: Path | None, tag: str, crawled: set[str]) -> _SnapshotS
                     scan.discovered.update(link.url for link in links)
                     if not list_match.group(1):
                         scan.per_page = len(links)
+                        scan.sidebar = sidebar_diagnostics(text)
                 elif url in crawled and 'name="itch:path"' in text:
                     scan.cards.append(card_details(text))
     except (EOFError, OSError, ValueError) as error:
@@ -312,20 +338,18 @@ def measure(result: CatalogResult, m: Measurements, sample: int | None, tag: str
         disallow = [line.split(":", 1)[1].strip() for line in lines
                     if line.lower().startswith("disallow:") and line.split(":", 1)[1].strip()]
         delay = any(line.lower().startswith("crawl-delay") for line in lines)
-        m.add(key, "п. 2.6.1", "robots.txt: заборонені маршрути", ", ".join(dict.fromkeys(disallow)),
-              "/embed/, /embed-upload/, /search, /checkout/, /game/download/, /bundle/download/, "
-              "/register-for-purchase/, /email-feedback/")
-        m.add(key, "п. 2.6.1", "директива Crawl-delay", "є" if delay else "відсутня", "відсутня")
+        m.add(key, "п. 2.6.1", "robots.txt: заборонені маршрути", ", ".join(dict.fromkeys(disallow)))
+        m.add(key, "п. 2.6.1", "директива Crawl-delay", "є" if delay else "відсутня")
     m.add(key, "п. 2.6.2", "сторінок списку з картками / карток на сторінці",
-          f"{number(scan.list_pages)} / {number(scan.per_page)}", "54 / 36")
-    m.add(key, "табл. 2.1, п. 2.6.2", f"модулів за тегом {tag}", number(len(scan.discovered)), "1 909")
-    m.add(key, "табл. 2.3, А.1", "рядків adventures.csv", number(n), "1 909")
-    m.add(key, "табл. 2.3, А.1, А.13", "рядків authors.csv", number(len(result.authors)), "~800")
-    m.add(key, "табл. 2.3, А.1, А.13", "рядків tags.csv", number(len(result.tags)), "40–60")
+          f"{number(scan.list_pages)} / {number(scan.per_page)}")
+    m.add(key, "табл. 2.1, п. 2.6.2", f"модулів за тегом {tag}", number(len(scan.discovered)))
+    m.add(key, "табл. 2.3, А.1", "рядків adventures.csv", number(n))
+    m.add(key, "табл. 2.3, А.1, А.13", "рядків authors.csv", number(len(result.authors)))
+    m.add(key, "табл. 2.3, А.1, А.13", "рядків tags.csv", number(len(result.tags)))
     if result.requests:
         m.add(key, "п. 2.6.2", "запитів / тривалість обходу",
               f"{number(result.requests)} / {number(result.seconds / 60, 0)} хв "
-              f"({number(result.seconds / max(1, result.requests), 2)} с на запит)", "≈ 2 000 + 850 / ≈ 75 хв + профілі")
+              f"({number(result.seconds / max(1, result.requests), 2)} с на запит)")
     if not n:
         return
 
@@ -334,49 +358,58 @@ def measure(result: CatalogResult, m: Measurements, sample: int | None, tag: str
 
     showcase = sum(1 for a in adventures if all(a.get(f) not in (None, "", []) for f in
                                                 ("title", "cover_image_url", "itch_id", "status", "tags", "author_ids")))
-    m.add(key, "табл. 2.12", "вітрина: назва, обкладинка, ID, статус, теги, автор", share(showcase, n), "100%")
-    for name, field_name, reported in (
-        ("назва", "title", "100%"), ("обкладинка", "cover_image_url", "100%"), ("статус", "status", "100%"),
-        ("теги", "tags", "100%"), ("автор", "author_ids", "100%"),
-        ("рейтинг", "rating_avg", "99%"), ("кількість оцінок", "ratings_count", "99%"), ("синопсис", "synopsis", "96%"),
-        ("жанр", "genre", "67%"), ("ціна (платні)", "price", "63%"), ("мова видання", "publication_language", "12%"),
-        ("рік виходу", "published_year", "8%"), ("рівень персонажів", "level_min", "18%"),
-        ("кількість гравців", "players_min", "3%"), ("тривалість (після відкидання < 1 год)", "duration_hours", "10%"),
-        ("система (за systems.json)", "system", "18%"), ("similar_urls", "similar_urls", "100%"),
+    m.add(key, "табл. 2.12", "вітрина: назва, обкладинка, ID, статус, теги, автор", share(showcase, n))
+    for name, field_name in (
+        ("назва", "title"), ("обкладинка", "cover_image_url"), ("статус", "status"), ("теги", "tags"),
+        ("автор", "author_ids"), ("рейтинг", "rating_avg"), ("кількість оцінок", "ratings_count"),
+        ("синопсис", "synopsis"), ("жанр", "genre"), ("ціна (платні)", "price"),
+        ("мова видання", "publication_language"), ("рік виходу", "published_year"), ("рівень персонажів", "level_min"),
+        ("кількість гравців", "players_min"), ("тривалість (після відкидання < 1 год)", "duration_hours"),
+        ("система (за systems.json)", "system"), ("similar_urls", "similar_urls"),
     ):
-        m.add(key, "табл. 2.12, А.2", name, share(filled(field_name), n), reported)
-    m.add(key, "табл. 2.13, п. 2.7.3", "безкоштовні (без ціни)", share(n - filled("price"), n), "37%")
+        m.add(key, "табл. 2.12, А.2", name, share(filled(field_name), n))
+    m.add(key, "табл. 2.13, п. 2.7.3", "безкоштовні (без ціни)", share(n - filled("price"), n))
+    systems = Counter(f"{a['system']} {a['edition']}" if a.get("edition") else a["system"]
+                      for a in adventures if a.get("system"))
+    m.add(key, "п. 2.6.3, табл. А.2", "системи (за systems.json)", top(systems, 7))
 
     details = scan.cards
     if details:
         sessions = Counter(d["labels"].get("average session") for d in details if d["labels"].get("average session"))
-        m.add(key, "табл. 2.12, п. 2.6.3", "мітка Average session", share(sum(sessions.values()), len(details)), "14%")
-        m.add(key, "п. 2.6.3", "значення Average session", top(sessions, 8), "4 з 14 — «A few seconds»")
+        m.add(key, "табл. 2.12, п. 2.6.3", "мітка Average session", share(sum(sessions.values()), len(details)))
+        m.add(key, "п. 2.6.3", "значення Average session", top(sessions, 8))
         currencies = Counter(d["currency"] for d in details if d["currency"])
-        m.add(key, "п. 2.6.3", "валюти цін", top(currencies, 5), "$ — 57, £ — 4, EUR — 2")
+        m.add(key, "п. 2.6.3", "валюти цін (offers.priceCurrency)", top(currencies, 5))
         dates = sum(1 for d in details if any(k in d["labels"] for k in ("published", "release date", "updated")))
-        m.add(key, "табл. 2.12", "дата виходу або оновлення", share(dates, len(details)), "8%")
+        m.add(key, "табл. 2.12", "дата виходу або оновлення", share(dates, len(details)))
         extra = ", ".join(f"{label.capitalize()} {share(sum(1 for d in details if label in d['labels']), len(details))}"
                           for label in EXTRA_LABELS)
-        m.add(key, "п. 2.6.5", "додаткові мітки картки", extra,
-              "Content 33%, Links 7%, Asset license 4%, Mentions 2%, Accessibility 2%, Publisher 1%, Multiplayer 1%")
+        m.add(key, "п. 2.6.5", "додаткові мітки картки", extra)
     several = sum(1 for a in adventures if len(a.get("author_ids") or []) > 1)
-    m.add(key, "п. 2.6.3, табл. 2.13", "множинне авторство", share(several, n), "1 з 100 (1%)")
+    m.add(key, "п. 2.6.3, табл. 2.13", "множинне авторство", share(several, n))
     reviews = [len(a.get("reviews") or []) for a in adventures]
     with_reviews = sum(1 for r in reviews if r)
-    m.add(key, "п. 2.6.4, табл. А.2", "картки з коментарями", share(with_reviews, n), "79%")
+    m.add(key, "п. 2.6.4, табл. А.2", "картки з коментарями", share(with_reviews, n))
     m.add(key, "п. 2.6.4", "коментарів на картку / разом",
-          f"{number(sum(reviews) / n, 1)} / {number(sum(reviews))}", "9,6 / 958 на вибірці (≈ 18 000 на 1 909)")
+          f"{number(sum(reviews) / n, 1)} / {number(sum(reviews))}")
     authors = result.authors
-    m.add(key, "табл. А.4", "автор: bio", share(sum(1 for a in authors if a.get("bio")), len(authors) or 1),
-          "TODO: виміряти")
+    m.add(key, "табл. А.4", "автор: bio (власний текст профілю, блок user_profile)",
+          share(sum(1 for a in authors if a.get("bio")), len(authors) or 1))
     tags = result.tags
-    m.add(key, "табл. А.5", "тег: description", share(sum(1 for t in tags if t.get("description")), len(tags) or 1),
-          "TODO: виміряти")
+    m.add(key, "табл. А.5", "тег: description (власний опис itch.io, блок tag_description)",
+          share(sum(1 for t in tags if t.get("description")), len(tags) or 1))
     m.add(key, "табл. А.5", "тег: category (бічний фільтр)",
-          share(sum(1 for t in tags if t.get("category")), len(tags) or 1), "TODO: виміряти")
+          share(sum(1 for t in tags if t.get("category")), len(tags) or 1))
     categories = Counter(t.get("category") for t in tags if t.get("category"))
-    m.add(key, "п. 2.6.5", "категорії тегів", top(categories, 4), "Types, Gameplay, Format, Theme")
+    m.add(key, "п. 2.6.5", "категорії тегів", top(categories, 4))
+    if scan.sidebar:
+        found = scan.sidebar
+        m.add(key, "п. 2.6.5", "бічний фільтр у HTML першої сторінки списку: заголовки груп / посилань на теги поза "
+              "картками / тегів із групою",
+              f"{', '.join(found['headings']) or 'немає'} / {number(found['tag_links'])} / {number(found['categories'])}")
+        if not found["categories"] and found["examples"]:
+            m.note(key, "Посилання на теги поза картками на першій сторінці списку: "
+                   + ", ".join(found["examples"]) + ".")
     rows = [{"author_ids": json.dumps(a.get("author_ids") or [])} for a in adventures]
     pool, exponent = calibrate_author_pool(rows)
     works = Counter(i for a in adventures for i in a.get("author_ids") or [])

@@ -33,8 +33,9 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator, NamedTuple
+from typing import Any, Iterable, Iterator, NamedTuple
 
+from app.application.commands.documents import INT64_MAX, INT64_MIN
 from app.domain.entities.play import Encounter
 from app.domain.values import DocumentKind, HpStatus
 from tools.prepare.csvio import CsvTable
@@ -49,7 +50,11 @@ RAW_MEMBER = re.compile(r"(?:^|/)data/(?:[^/]+/)*([^/]+?)\.jsonl(?:\.gz)?$")
 BROKEN_FILE_ERRORS = (EOFError, OSError, zlib.error, tarfile.TarError)
 #: Тип події видно з початку рядка — сирі події непотрібних типів не розбираються
 EVENT_TYPE = re.compile(r'"event_type"\s*:\s*"([a-z_]+)"')
-NEEDED_EVENTS = frozenset({"message", "command", "combat_state_update", "combat_start", "combat_end"})
+#: Події виклику команди Avrae: повідомлення з тим самим message_id — команда, а не репліка
+COMMAND_EVENTS = frozenset({"command", "alias_resolution", "snippet_resolution"})
+NEEDED_EVENTS = frozenset({"message", "combat_state_update", "combat_start", "combat_end"}) | COMMAND_EVENTS
+#: Префікс команд Avrae за замовчуванням; сервер може задати власний — він є в подіях command
+DEFAULT_PREFIX = "!"
 
 HP = re.compile(r"^\s*<\s*(-?\d+)\s*(?:/\s*(-?\d+)\s*)?(?:HP)?\s*(?:;\s*([A-Za-z]+)\s*)?>")
 CLASS_LEVEL = re.compile(r"^(.*?)\s*(\d+)\s*$")
@@ -68,9 +73,6 @@ ENCOUNTER_COLUMNS = (
     "participants_count", "player_character_ids", "narrative_text", "commands", "messages_count", "derived_fields",
 )
 
-#: Класи SRD і поширені класи поза ним — для вимірів п. 2.5.3
-REPORTED_CLASSES = ("Artificer", "Blood Hunter", "Bloodhunter")
-
 
 # --------------------------------------------------------------------------
 # Розбір полів актора (таблиця 2.9)
@@ -81,7 +83,8 @@ class ParsedHp(NamedTuple):
     current: int | None = None
     maximum: int | None = None
     status: str | None = None
-    #: status — зі статусом; numbers — лише числа; empty — порожньо; unparsed — інший формат
+    #: status — зі статусом; numbers — лише числа; empty — порожньо; unparsed — інший формат;
+    #: oversized — число, якого не вмістить жодне сховище (жартівливе «999…9» ведучого)
     form: str = "empty"
 
 
@@ -95,6 +98,8 @@ def parse_hp(raw: Any) -> ParsedHp:
         return ParsedHp(form="unparsed")
     current = int(match.group(1))
     maximum = int(match.group(2)) if match.group(2) is not None else None
+    if not _fits(current) or (maximum is not None and not _fits(maximum)):
+        return ParsedHp(form="oversized")
     status = match.group(3)
     if status is not None and status not in HP_STATUSES:
         status = None
@@ -110,7 +115,8 @@ def parse_classes(raw: Any) -> list[tuple[str, int | None]]:
             continue
         match = CLASS_LEVEL.match(part)
         if match and match.group(1).strip():
-            result.append((match.group(1).strip(), int(match.group(2))))
+            level = int(match.group(2))
+            result.append((match.group(1).strip(), level if _fits(level) else None))
         else:
             result.append((part, None))
     return result
@@ -122,7 +128,8 @@ def main_class(classes: list[tuple[str, int | None]]) -> tuple[str | None, int |
         return None, None
     name = max(classes, key=lambda pair: pair[1] or 0)[0]
     levels = [level for _, level in classes if level is not None]
-    return name, (sum(levels) if levels else None)
+    total = sum(levels) if levels else None
+    return name, (total if total is None or _fits(total) else None)
 
 
 def split_list(raw: Any) -> list[str]:
@@ -140,6 +147,16 @@ def is_player_character(actor: dict) -> bool:
     return bool(str(actor.get("class") or "").strip())
 
 
+def is_command_text(content: str, prefixes: Iterable[str]) -> bool:
+    """Текст, що починається з префікса команд і літери («!init next»): виклик
+    команди, навіть якщо події command немає — невдалий виклик чи помилка в назві."""
+    text = content.lstrip()
+    for prefix in prefixes:
+        if prefix and text.startswith(prefix) and len(text) > len(prefix) and text[len(prefix)].isalpha():
+            return True
+    return False
+
+
 def started_at(combat_id: str) -> datetime | None:
     """Час початку — перша половина імені файлу до дефіса (Unix-час)."""
     head = combat_id.split("-", 1)[0]
@@ -150,11 +167,17 @@ def character_id(name: str, controller: str) -> str:
     return DocumentKind.CHARACTER.natural_id(f"{name}:{controller}")
 
 
+def _fits(number: int) -> bool:
+    """Та сама межа, що й на шляху запису застосунку: 64-бітне ціле."""
+    return INT64_MIN <= number <= INT64_MAX
+
+
 def _int(value: Any) -> int:
     try:
-        return int(value or 0)
-    except (TypeError, ValueError):
+        number = int(value or 0)
+    except (TypeError, ValueError, OverflowError):
         return 0
+    return number if _fits(number) else 0
 
 
 def _float(value: Any) -> float | None:
@@ -467,8 +490,10 @@ class FireballPreparation:
                 "player_character_ids": sorted(self._combat_characters.get(combat_id, ())), "derived_fields": []}
 
     def _encounter(self, combat_id: str, lines: Iterator[str], stats: "_RawStats") -> dict[str, Any]:
-        messages: list[tuple[str, bool, str]] = []
+        messages: list[tuple[str, bool, str, Any]] = []
         commands: list[str] = []
+        command_ids: set[Any] = set()
+        prefixes: set[str] = {DEFAULT_PREFIX}
         dms: list[str] = []
         channel = None
         rounds = combatants = 0
@@ -487,9 +512,15 @@ class FireballPreparation:
                 inner_id = event.get("combat_id")
             event_type = event.get("event_type")
             if event_type == "message":
-                messages.append((str(event.get("author_id")), bool(event.get("author_bot")), event.get("content") or ""))
-            elif event_type == "command":
-                if event.get("command_name"):
+                messages.append((str(event.get("author_id")), bool(event.get("author_bot")),
+                                 event.get("content") or "", event.get("message_id")))
+            elif event_type in COMMAND_EVENTS:
+                if event.get("message_id") is not None:
+                    command_ids.add(event["message_id"])
+                prefix = event.get("prefix")
+                if isinstance(prefix, str) and prefix.strip():
+                    prefixes.add(prefix.strip())
+                if event_type == "command" and event.get("command_name"):
                     commands.append(str(event["command_name"]))
             elif event_type == "combat_state_update":
                 data = event.get("data") or {}
@@ -510,8 +541,22 @@ class FireballPreparation:
                 end_ts = _float(event.get("timestamp")) or end_ts
 
         dm = dms[0] if dms else None
-        dm_messages = [(bot, content) for author, bot, content in messages if dm is not None and author == dm]
-        narrative = [content for bot, content in dm_messages if not bot and content.strip()]
+        # репліки ведучого: його повідомлення без викликів команд — Avrae записує
+        # команду і як подію message, і як подію command з тим самим message_id
+        dm_messages = [(bot, content, message_id) for author, bot, content, message_id in messages
+                       if dm is not None and author == dm]
+        narrative = []
+        for bot, content, message_id in dm_messages:
+            if bot:
+                stats.dm_bot_messages += 1
+            elif message_id is not None and message_id in command_ids:
+                stats.dm_command_messages += 1
+            elif is_command_text(content, prefixes):
+                stats.dm_prefixed_messages += 1
+            elif not content.strip():
+                stats.dm_empty_messages += 1
+            else:
+                narrative.append(content)
         duration = None
         derived = ["messages_count"]
         if start_ts is not None and end_ts is not None:
@@ -531,7 +576,6 @@ class FireballPreparation:
         stats.with_combatants += combatants > 0
         stats.several_dms += len(set(dms)) > 1
         stats.dm_messages += len(dm_messages)
-        stats.dm_bot_messages += sum(1 for bot, _ in dm_messages if bot)
         stats.dm_replies += len(narrative)
         stats.dm_chars += sum(len(text) for text in narrative)
         stats.commands.update(commands)
@@ -575,32 +619,27 @@ class FireballPreparation:
         n_instances = self._result.participations
         n_all = n_players + n_instances
         combats = len(self._combat_characters)
-        m.add(key, "п. 2.5.2", "трійок (повний прохід filtered)", number(self._triples), "153 829")
-        m.add(key, "п. 2.5.2", "боїв у каталозі filtered", number(combats), "14 700")
-        m.add(key, "п. 2.5.2, табл. А.13", "унікальних учасників", number(n_all), "48 895")
-        m.add(key, "табл. 2.3, А.1, А.9", "персонажів гравців (name + controller_id)", number(n_players), "6 092")
-        m.add(key, "табл. 2.3, А.1, А.11", "екземплярів монстрів (encounter_id + instance_label)", number(n_instances),
-              "42 803")
+        m.add(key, "п. 2.5.2", "трійок (повний прохід filtered)", number(self._triples))
+        m.add(key, "п. 2.5.2", "боїв у каталозі filtered", number(combats))
+        m.add(key, "п. 2.5.2, табл. А.13", "унікальних учасників", number(n_all))
+        m.add(key, "табл. 2.3, А.1, А.9", "персонажів гравців (name + controller_id)", number(n_players))
+        m.add(key, "табл. 2.3, А.1, А.11", "екземплярів монстрів (encounter_id + instance_label)", number(n_instances))
         controllers = sum(1 for (_, controller) in self._characters if controller) + self._instance_controller
-        m.add(key, "табл. 2.8", "controller_id заповнений", share(controllers, n_all), "100%")
-        m.add(key, "табл. 2.8, п. 2.5.2", "порожній class (екземпляри монстрів)", share(n_instances, n_all),
-              "87,5% (42 803 із 48 895)")
-        m.add(key, "п. 2.5.2, табл. А.9", "заповнений class (персонажі гравців)", share(n_players, n_all), "12,5%")
+        m.add(key, "табл. 2.8", "controller_id заповнений", share(controllers, n_all))
+        m.add(key, "табл. 2.8, п. 2.5.2", "порожній class (екземпляри монстрів)", share(n_instances, n_all))
+        m.add(key, "п. 2.5.2, табл. А.9", "заповнений class (персонажі гравців)", share(n_players, n_all))
         matched = sum(self._result.play_counts.values())
         false_hits = sum(1 for e in players if name_key(e.actor.get("race")) in self._monsters)
-        m.add(key, "табл. 2.8", "race = назва монстра SRD, class порожній (зіставлено)", number(matched), "21 293")
+        m.add(key, "табл. 2.8", "race = назва монстра SRD, class порожній (зіставлено)", number(matched))
         m.add(key, "табл. 2.8", "race = назва монстра SRD, class заповнений (хибні спрацювання)",
-              f"{number(false_hits)} ({percent(false_hits, false_hits + matched)} від усіх збігів race)", "360 (1,7%)")
-        m.add(key, "табл. А.11, п. 2.5.2", "записів участі, зіставлених зі SRD", share(matched, n_instances),
-              "49,7% (21 293 з 42 803)")
+              f"{number(false_hits)} ({percent(false_hits, false_hits + matched)} від усіх збігів race)")
+        m.add(key, "табл. А.11, п. 2.5.2", "записів участі, зіставлених зі SRD", share(matched, n_instances))
         if self._monsters_2024:
             m.add(key, "п. 2.4", "та сама перевірка за назвами монстрів src/2024", share(self._matched_2024, n_instances))
         races = Counter(self._instance_races)
         for entry in players:
             races[" ".join(str(entry.actor.get("race") or "").split()) or "—"] += 1
-        m.add(key, "п. 2.5.2", "поле race, перші 15 значень", top(races, 15),
-              "Skeleton (997), Zombie (843), Bandit (819), Goblin (817), Wolf (781), Commoner (594); "
-              "Variant Human (759), Half-Elf (322)")
+        m.add(key, "п. 2.5.2", "поле race, перші 15 значень", top(races, 15))
         m.add(key, "табл. А.11", "екземпляри без race (власні учасники ведучого) / групи",
               f"{number(self._instances_without_race)} / {number(self._groups)}")
         m.add(key, "п. 2.5.2", "імен, що в одному бою мали й не мали class", number(self._name_conflicts))
@@ -608,18 +647,15 @@ class FireballPreparation:
         # придатність словників SRD (п. 2.5.3)
         player_races = Counter(" ".join(str(e.actor.get("race") or "").split()) for e in players)
         outside = Counter({race: n for race, n in player_races.items() if race and name_key(race) not in self._srd_races})
-        m.add(key, "п. 2.5.3", "раси персонажів поза Races + Subraces SRD (перші 10)", top(outside, 10),
-              "Variant Human, Astral Elf, Shifter, Dhampir, Custom Lineage")
+        m.add(key, "п. 2.5.3", "раси персонажів поза Races + Subraces SRD (перші 10)", top(outside, 10))
         m.add(key, "п. 2.5.3", "персонажів із расою поза SRD", share(sum(outside.values()), n_players))
         class_counts: Counter = Counter()
         for entry in players:
             class_counts.update({name for name, _ in parse_classes(entry.actor.get("class"))})
         outside_classes = Counter({c: n for c, n in class_counts.items() if name_key(c) not in self._srd_classes})
-        m.add(key, "п. 2.5.3", "класи поза 12 класами SRD (персонажів, перші 10)", top(outside_classes, 10),
-              "Artificer (351), Blood Hunter (102), Bloodhunter (22)")
+        m.add(key, "п. 2.5.3", "класи поза 12 класами SRD (персонажів, перші 10)", top(outside_classes, 10))
         m.add(key, "п. 2.5.3", "Blood Hunter / Bloodhunter",
-              f"{number(class_counts.get('Blood Hunter', 0))} / {number(class_counts.get('Bloodhunter', 0))}",
-              "102 / 22")
+              f"{number(class_counts.get('Blood Hunter', 0))} / {number(class_counts.get('Bloodhunter', 0))}")
 
         # закляття
         uses: Counter = Counter()
@@ -628,9 +664,9 @@ class FireballPreparation:
         matched_names = [s for s in uses if s in self._spells]
         matched_uses = sum(uses[s] for s in matched_names)
         m.add(key, "п. 2.5.3", "унікальних назв заклять / зіставлено зі SRD",
-              f"{number(len(uses))} / {share(len(matched_names), len(uses))}", "1 315 / 313 (23,8%)")
+              f"{number(len(uses))} / {share(len(matched_names), len(uses))}")
         m.add(key, "п. 2.5.3, табл. А.9", "частка зіставлених за обсягом використання",
-              share(matched_uses, sum(uses.values())), "82,8%")
+              share(matched_uses, sum(uses.values())))
 
         # перетворення й покриття (п. 2.5.4, таблиця А.9)
         statuses = Counter(self._instance_status)
@@ -652,22 +688,18 @@ class FireballPreparation:
                 coverage[name] += bool(split_list(actor.get(name)) if name != "description"
                                        else str(actor.get(name) or "").strip())
         ordered = [(s.value, statuses.get(s.value, 0)) for s in HpStatus]
-        m.add(key, "п. 2.5.4", "статуси здоров'я (усі учасники, останній стан у бою)", counts_line(ordered),
-              "Healthy (44 035), Injured (2 184), Bloodied (676), Critical (269), Dead (54)")
-        m.add(key, "п. 2.5.4", "учасників без статусу: без максимуму HP / порожнє hp / інший формат",
+        m.add(key, "п. 2.5.4", "статуси здоров'я (усі учасники, останній стан у бою)", counts_line(ordered))
+        m.add(key, "п. 2.5.4", "учасників без статусу: без максимуму HP / порожнє hp / інший формат / "
+              "число поза 64 бітами",
               f"{number(hp_forms.get('numbers', 0))} / {number(hp_forms.get('empty', 0))} / "
-              f"{number(hp_forms.get('unparsed', 0))} — разом {number(statuses.get('—', 0))}",
-              "TODO: 47 218 ≠ 48 895")
-        m.add(key, "п. 2.5.4, табл. А.9", "мультиклас (кілька пар «клас — рівень»)", share(multiclass, n_players),
-              "32,8%")
-        reported = {"race": "96,3%", "level": "99,8%", "hp": "97,4%", "hp_status": "97,4%", "spells": "22,5%",
-                    "attacks": "96,6%", "actions": "11,5%", "effects": "7,5%", "description": "4,3% (табл. 2.17)"}
-        for name, value in reported.items():
-            m.add(key, "табл. А.9", f"персонаж: {name}", share(coverage[name], n_players), value)
+              f"{number(hp_forms.get('unparsed', 0))} / {number(hp_forms.get('oversized', 0))} — разом "
+              f"{number(statuses.get('—', 0))}")
+        m.add(key, "п. 2.5.4, табл. А.9", "мультиклас (кілька пар «клас — рівень»)", share(multiclass, n_players))
+        for name in ("race", "level", "hp", "hp_status", "spells", "attacks", "actions", "effects", "description"):
+            m.add(key, "табл. А.9", f"персонаж: {name}", share(coverage[name], n_players))
         instance_hp = sum(n for form, n in self._instance_hp_forms.items() if form in ("status", "numbers"))
-        m.add(key, "табл. А.11", "участь: hp_current, hp_max", share(instance_hp, n_instances), "97,4%")
-        m.add(key, "табл. А.11", "участь: hp_status", share(self._instance_hp_forms.get("status", 0), n_instances),
-              "97,4%")
+        m.add(key, "табл. А.11", "участь: hp_current, hp_max", share(instance_hp, n_instances))
+        m.add(key, "табл. А.11", "участь: hp_status", share(self._instance_hp_forms.get("status", 0), n_instances))
         if self._broken_files or self._broken_lines:
             m.note(key, f"Пошкоджених файлів: {self._broken_files}, рядків, що не розібрано як JSON: "
                    f"{self._broken_lines} — пропущено.")
@@ -685,7 +717,7 @@ class FireballPreparation:
         counts = self._result.play_counts
         names = {record["index"]: record["name"] for record in self._srd.monsters}
         m.add(key, "п. 2.5.2, табл. А.11", "найчастіші монстри (play_count)",
-              top(Counter({names[i]: n for i, n in counts.items()}), 10), "Skeleton (997), Zombie (843), Bandit (819)")
+              top(Counter({names[i]: n for i, n in counts.items()}), 10))
         m.add(key, "табл. А.7", "монстрів SRD із play_count > 0", share(len(counts), len(self._srd.monsters)))
         single = sum(1 for n in counts.values() if n <= 5)
         m.add(key, "п. 2.5.2", "монстрів, що трапилися не більше 5 разів", share(single, len(counts) or 1))
@@ -695,50 +727,55 @@ class FireballPreparation:
         m = self._m
         m.section(key, "Крок 2. FIREBALL: зустрічі (підрозділи 2.5.5–2.5.7, таблиці 2.10, 2.11, А.10)")
         total = len(self._combat_characters)
-        m.add(key, "п. 2.5.2", "боїв у каталозі data (сирі події)", number(s.raw_files), "≈ 25 тис. (за авторами)")
-        m.add(key, "табл. 2.3, А.1", "рядків encounters.csv", number(self._result.encounters), "14 700")
+        m.add(key, "п. 2.5.2", "боїв у каталозі data (сирі події)", number(s.raw_files))
+        m.add(key, "табл. 2.3, А.1", "рядків encounters.csv", number(self._result.encounters))
         m.add(key, "п. 2.5.5", "боїв filtered із сирими подіями", share(s.with_raw, total))
-        m.add(key, "табл. 2.10", "combat_start", share(s.with_start, total), "99,7%")
-        m.add(key, "табл. 2.10, А.10", "ідентифікатор ведучого (data.dm)", share(s.with_dm, total), "99,7%")
-        m.add(key, "табл. 2.10, п. 2.5.1", "ім'я файлу = combat_id сирих подій", share(s.inner_id_match, total), "99,7%")
-        m.add(key, "табл. 2.10, А.10", "combat_end (ended_at, duration_seconds)", share(s.with_end, total), "94,7%")
-        m.add(key, "табл. 2.10, А.10", "ненульова кількість раундів", share(s.with_rounds, total), "93,0%")
-        m.add(key, "табл. А.10", "participants_count > 0", share(s.with_combatants, total), "93,0%")
-        m.add(key, "табл. А.10", "narrative_text", share(s.narrative_chars.count, total), "99,7%")
-        m.add(key, "п. 2.5.5", "повідомлень з автором data.dm / з ознакою бота",
-              f"{number(s.dm_messages)} / {share(s.dm_bot_messages, s.dm_messages)}", "45 893 / 22 774 (49,6%)")
+        m.add(key, "табл. 2.10", "combat_start", share(s.with_start, total))
+        m.add(key, "табл. 2.10, А.10", "ідентифікатор ведучого (data.dm)", share(s.with_dm, total))
+        m.add(key, "табл. 2.10, п. 2.5.1", "ім'я файлу = combat_id сирих подій", share(s.inner_id_match, total))
+        m.add(key, "табл. 2.10, А.10", "combat_end (ended_at, duration_seconds)", share(s.with_end, total))
+        m.add(key, "табл. 2.10, А.10", "ненульова кількість раундів", share(s.with_rounds, total))
+        m.add(key, "табл. А.10", "participants_count > 0", share(s.with_combatants, total))
+        m.add(key, "табл. А.10", "narrative_text", share(s.narrative_chars.count, total))
+        m.add(key, "п. 2.5.5", "повідомлень з автором data.dm", number(s.dm_messages))
+        m.add(key, "п. 2.5.5", "з них виклики команд: за message_id подій command, alias_resolution, "
+              "snippet_resolution / лише за префіксом",
+              f"{share(s.dm_command_messages, s.dm_messages)} / {share(s.dm_prefixed_messages, s.dm_messages)}")
+        m.add(key, "п. 2.5.5", "з них з ознакою бота author_bot / порожні",
+              f"{share(s.dm_bot_messages, s.dm_messages)} / {share(s.dm_empty_messages, s.dm_messages)}")
         m.add(key, "п. 2.5.5", "реплік ведучого після фільтра / символів",
-              f"{number(s.dm_replies)} / {number(s.dm_chars)}", "23 119 / 657 492 (вибірка 301 бою)")
-        m.add(key, "п. 2.5.5", "символів на репліку", number(s.dm_chars / s.dm_replies if s.dm_replies else None),
-              "28")
+              f"{number(s.dm_replies)} / {number(s.dm_chars)}")
+        m.add(key, "п. 2.5.5", "символів на репліку", number(s.dm_chars / s.dm_replies if s.dm_replies else None))
         m.add(key, "п. 2.5.5", "символів narrative_text на бій",
-              s.narrative_chars.describe(0), "≈ 2 200; екстраполяція ≈ 32 млн символів")
+              s.narrative_chars.describe(0))
         m.add(key, "п. 2.5.5", "символів narrative_text разом", number(sum(s.narrative_chars.values)))
         m.add(key, "п. 2.5.5", "боїв, де data.dm змінювався", number(s.several_dms))
-        for name, dist, reported, digits in (
-            ("раундів у бою", s.rounds, "3 / 20,5 / 2 554", 1),
-            ("тривалість, хв", s.durations, "12,7 / 1 264 / 50 031", 1),
-            ("повідомлень", s.messages, "115,5 / 327,2 / 8 120", 1),
-            ("реплік ведучого", s.replies, "36,5 / 77,1 / 1 770", 1),
-            ("учасників", s.participants, "3 / 4,9 / 65", 1),
-        ):
-            m.add(key, "табл. 2.11", name, dist.describe(digits), f"медіана / середнє / максимум: {reported}")
+        for name, dist in (("раундів у бою", s.rounds), ("тривалість, хв", s.durations), ("повідомлень", s.messages),
+                           ("реплік ведучого", s.replies), ("учасників", s.participants)):
+            m.add(key, "табл. 2.11", name, dist.describe(1))
         longest = s.durations.maximum()
         m.add(key, "п. 2.5.6", "найдовший бій",
-              f"{number(longest, 0)} хв ({number(longest / 1440, 1)} доби)" if longest else "—", "50 031 хв (> 34 доби)")
+              f"{number(longest, 0)} хв ({number(longest / 1440, 1)} доби)" if longest else "—")
         m.add(key, "п. 2.5.6, табл. 2.14", "is_abandoned (понад 8 годин)", share(s.abandoned, s.durations.count or 1))
-        m.add(key, "п. 2.5.7", "команди (кількість викликів, перші 10)", top(s.commands, 10),
-              "init next (4 890), embed (3 206), action (3 016), init attack (1 984), cast (1 233), roll (956), "
-              "check (919), character (906)")
+        m.add(key, "п. 2.5.7", "команди (кількість викликів, перші 10)", top(s.commands, 10))
         sizes = sorted(len(ids) for ids in self._combat_characters.values() if ids)
         party = max(1, sizes[len(sizes) // 2]) if sizes else None
         m.add(key, "табл. 2.13, п. 2.7.3, А.2", "персонажів гравців у бою (медіана; калібрування players_min/max)",
-              f"{number(party)} (боїв із персонажами {share(len(sizes), total)})", "TODO: порахувати")
+              f"{number(party)} (боїв із персонажами {share(len(sizes), total)})")
+        if sizes:
+            spread = Distribution(list(map(float, sizes)))
+            m.add(key, "п. 2.7.3", "персонажів гравців у бою: розподіл",
+                  f"{spread.describe(1)}; 10-й / 90-й процентилі {number(spread.percentile(10))} / "
+                  f"{number(spread.percentile(90))}; "
+                  + ", ".join(f"{k} — {percent(v, len(sizes))}" for k, v in sorted(Counter(min(n, 6) for n in sizes).items())
+                              ).replace("6 —", "6 і більше —"))
         if s.negative_durations:
             m.note(key, f"Боїв, де combat_end раніше за combat_start: {s.negative_durations} — тривалість не записано.")
         m.note(key, "Знаменник часток — бої каталогу filtered (рядки encounters.csv); розподіли таблиці 2.11 — "
                "за зустрічами із заповненим полем. Повідомлення — події message усього каналу, репліки ведучого — "
-               "повідомлення автора data.dm без ознаки бота.")
+               "непорожні повідомлення автора data.dm без ознаки бота, крім викликів команд: повідомлень із "
+               "message_id подій command, alias_resolution чи snippet_resolution і повідомлень, що починаються "
+               "з префікса команд (за замовчуванням «!») і літери.")
 
 
 @dataclass(slots=True)
@@ -757,6 +794,9 @@ class _RawStats:
     abandoned: int = 0
     dm_messages: int = 0
     dm_bot_messages: int = 0
+    dm_command_messages: int = 0
+    dm_prefixed_messages: int = 0
+    dm_empty_messages: int = 0
     dm_replies: int = 0
     dm_chars: int = 0
     commands: Counter = field(default_factory=Counter)

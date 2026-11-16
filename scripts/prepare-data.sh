@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Підготовка даних (розділ 2 звіту): 5e SRD, FIREBALL (архів ≈ 7,7 ГБ, один раз),
-# каталог itch.io (повний обхід ≈ 2 год, паралельно з FIREBALL), перевірка CSV
+# каталог itch.io (повний обхід ≈ 4 год, паралельно з FIREBALL), перевірка CSV
 # моделлю застосунку і звіт вимірювань data/csv/measurements.md.
 #   ./scripts/prepare-data.sh [--quick] [--catalog-sample N] [--fresh-catalog]
 #                             [--skip-catalog] [--skip-fireball] [--offline]
-# --quick — вибірка 100 карток каталогу (≈ 10 хв); повторний запуск продовжує з місця зупинки.
+# --quick — вибірка 100 карток каталогу (≈ 30 хв); повторний запуск продовжує з місця зупинки.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export APP_UID="${APP_UID:-$(id -u)}" APP_GID="${APP_GID:-$(id -g)}"

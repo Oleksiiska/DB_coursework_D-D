@@ -89,7 +89,7 @@ def check(csv_dir: Path, m: Measurements, tag_aliases: dict[str, str]) -> int:
         m.add(key, "табл. 2.3", name, f"рядків {number(total)}, відхилено б {number(rejected)}"
               + (f" ({top(reasons, 5)})" if rejected else ""))
         log.info("%s: перевірено %d рядків, відхилено б %d", name, total, rejected)
-    m.add(key, "табл. 2.3, А.1, А.13", "разом рядків у CSV", number(rows_total), "~66 700")
+    m.add(key, "табл. 2.3, А.1, А.13", "разом рядків у CSV", number(rows_total))
     unknown = sorted({f"{vocabulary_name}: {term}" for vocabulary_name, term in vocabulary.drain_unknown()})
     if unknown:
         m.add(key, "п. 2.11", "значення поза словниками (журнал нерозпізнаних)",
@@ -99,8 +99,8 @@ def check(csv_dir: Path, m: Measurements, tag_aliases: dict[str, str]) -> int:
     if monsters:
         environments = Counter(env for _, envs, _ in monsters for env in envs)
         m.add(key, "п. 2.8.1, табл. А.7", "середовище монстра (класифікатор застосунку)",
-              f"{share(sum(1 for _, envs, _ in monsters if envs), len(monsters))}; {top(environments, 8)}", "100%")
-        m.add(key, "табл. А.7", "abilities_text", share(sum(1 for *_, text in monsters if text), len(monsters)), "99%")
+              f"{share(sum(1 for _, envs, _ in monsters if envs), len(monsters))}; {top(environments, 8)}")
+        m.add(key, "табл. А.7", "abilities_text", share(sum(1 for *_, text in monsters if text), len(monsters)))
     return rejected_total
 
 

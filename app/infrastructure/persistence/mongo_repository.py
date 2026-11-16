@@ -267,27 +267,46 @@ class MongoCrudRepository(Generic[T]):
     async def add_many(self, entities: Sequence[T]) -> int:
         """Невпорядкований пакетний запис.
 
-        Помилка окремого документа (повтор ключа, невалідний документ) не
-        зупиняє решту пакета. Збій самого сховища — недоступний шард,
-        невиконана вимога підтвердження запису — піднімається вище як
-        ConnectionError зі стислим описом: пакет лишається непідтвердженим і
-        надходить повторно, а не губиться (п. 4.4).
+        Помилка окремого документа (повтор ключа, невалідний документ, зокрема
+        такий, що драйвер не може закодувати в BSON) не зупиняє решту пакета:
+        документ пропускається з попередженням. Збій самого сховища —
+        недоступний шард, невиконана вимога підтвердження запису — піднімається
+        вище як ConnectionError зі стислим описом: пакет лишається
+        непідтвердженим і надходить повторно, а не губиться (п. 4.4).
         """
+        if not entities:
+            return 0
+        return await self._write([self._to_document(entity) for entity in entities])
+
+    async def _write(self, documents: list[dict]) -> int:
+        from bson import DEFAULT_CODEC_OPTIONS
+        from bson import encode as bson_encode
+        from bson.errors import InvalidDocument
         from pymongo import ReplaceOne
         from pymongo.errors import BulkWriteError
 
-        if not entities:
-            return 0
-        operations = []
-        for entity in entities:
-            document = self._to_document(entity)
-            operations.append(ReplaceOne(self._write_filter(document), document, upsert=True))
+        operations = [ReplaceOne(self._write_filter(document), document, upsert=True) for document in documents]
         started = time.perf_counter()
         try:
             result = await self._documents.bulk_write(operations, ordered=False)
             log.debug("%s.add_many %d док. — %.0f мс", self._collection, len(operations),
                       (time.perf_counter() - started) * 1000)
             return result.matched_count + result.upserted_count
+        except (OverflowError, InvalidDocument):
+            # Драйвер кодує пакет до надсилання, тож один документ, якого не можна
+            # подати в BSON (ціле понад 64 біти, непідтримуваний тип), зупинив би
+            # весь пакет — і той надходив би повторно без кінця
+            codec_options = getattr(self._documents, "codec_options", DEFAULT_CODEC_OPTIONS)
+            valid = []
+            for document in documents:
+                try:
+                    bson_encode(document, codec_options=codec_options)
+                    valid.append(document)
+                except (OverflowError, InvalidDocument) as reason:
+                    log.warning("%s: документ %s не записано: %s", self._collection, document.get("_id"), reason)
+            if len(valid) == len(documents):
+                raise
+            return await self._write(valid) if valid else 0
         except BulkWriteError as error:
             details = error.details
             errors = details.get("writeErrors", [])

@@ -79,7 +79,9 @@ from app.infrastructure.persistence import (
     SearchIndexAdapter,
 )
 from app.infrastructure.sources import CrawlerSource, CsvSource, GeneratorSource, MarkovTextBuilder, PolitenessPolicy
-from app.infrastructure.sources.generator_source import DEFAULT_PROFILES, calibrate_author_pool
+from app.infrastructure.sources.generator_source import (
+    DEFAULT_PROFILES, calibrate_author_pool, calibrate_catalog_shares,
+)
 
 #: Каталог пакета app/: списки вручну лежать поруч із кодом і потрапляють
 #: в образ разом із ним, тож шлях до них не залежить від робочого каталогу
@@ -511,6 +513,7 @@ class Container:
         text_builder = MarkovTextBuilder()
         text_builder.train(corpus)
         pool_size, exponent = calibrate_author_pool(adventure_rows)
+        free_share, multi_author_share = calibrate_catalog_shares(adventure_rows)
         return GeneratorSource(
             profiles=DEFAULT_PROFILES,
             text_builder=text_builder,
@@ -522,6 +525,8 @@ class Container:
             publishers=self.manual_list("publishers.json"),
             tags=tags,
             party_median=self._party_median(csv_dir / self.CSV_FILES[DocumentKind.ENCOUNTER]),
+            free_share=free_share,
+            multi_author_share=multi_author_share,
         )
 
     def crawler_source(self) -> CrawlerSource:

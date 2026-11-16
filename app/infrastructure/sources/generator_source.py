@@ -163,6 +163,10 @@ class MarkovTextBuilder:
         self._order = order
         self._transitions: dict[tuple[str, ...], list[str]] = {}
         self._starts: list[tuple[str, ...]] = []
+        #: Початкові стани з ключовими словами профілю: обчислюються один раз на
+        #: набір ключових слів, а не на кожне речення — інакше кожен виклик
+        #: перебирав би всі десятки тисяч станів корпусу
+        self._keyed: dict[frozenset[str], list[tuple[str, ...]]] = {}
         self._rng = random.Random()
 
     def train(self, corpus: list[str]) -> None:
@@ -179,6 +183,7 @@ class MarkovTextBuilder:
         if not starts and corpus:
             return self.train([])
         self._transitions, self._starts = transitions, starts
+        self._keyed = {}
 
     def generate(self, sentences: int, keywords: list[str]) -> str:
         """Генерація з примусовою вставкою ключових слів профілю: речення
@@ -186,8 +191,7 @@ class MarkovTextBuilder:
         if not self._starts:
             self.train([])
         rng = self._rng
-        wanted = {k.lower() for k in keywords}
-        keyed = [s for s in self._starts if wanted & {w.lower().strip(".,;:!?") for w in s}] if wanted else []
+        keyed = self._keyed_starts(keywords)
         result: list[str] = []
         for _ in range(sentences):
             for _attempt in range(4):  # без повторів речень в одному тексті
@@ -204,6 +208,17 @@ class MarkovTextBuilder:
                     break
             result.append(sentence)
         return " ".join(result)
+
+    def _keyed_starts(self, keywords: list[str]) -> list[tuple[str, ...]]:
+        wanted = frozenset(k.lower() for k in keywords)
+        if not wanted:
+            return []
+        keyed = self._keyed.get(wanted)
+        if keyed is None:
+            keyed = self._keyed[wanted] = [
+                s for s in self._starts if wanted & {w.lower().strip(".,;:!?") for w in s}
+            ]
+        return keyed
 
 
 def calibrate_author_pool(adventure_rows: Sequence[dict]) -> tuple[int, float]:
@@ -227,6 +242,23 @@ def calibrate_author_pool(adventure_rows: Sequence[dict]) -> tuple[int, float]:
     return len(counts), min(2.0, max(0.5, -slope))
 
 
+def calibrate_catalog_shares(adventure_rows: Sequence[dict]) -> tuple[float, float]:
+    """Частка безкоштовних модулів (без ціни) і частка множинного авторства за
+    adventures.csv (п. 2.7.3, табл. 2.13); без даних — значення повного каталогу."""
+    if len(adventure_rows) < 20:
+        return GeneratorSource.FREE_SHARE, GeneratorSource.MULTI_AUTHOR_SHARE
+    free = several = 0
+    for row in adventure_rows:
+        free += str(row.get("price") or "").strip() in ("", "0", "0.0")
+        raw = row.get("author_ids") or "[]"
+        try:
+            ids = json.loads(raw) if isinstance(raw, str) and raw.startswith("[") else str(raw).split("|")
+        except json.JSONDecodeError:
+            ids = []
+        several += len([i for i in ids if i]) > 1
+    return free / len(adventure_rows), several / len(adventure_rows)
+
+
 class _Weighted:
     """Зважений вибір із наперед обчисленими накопиченими вагами."""
 
@@ -243,6 +275,14 @@ class _Weighted:
     def pick(self, rng: random.Random) -> object:
         return self.items[bisect.bisect(self.cumulative, rng.random() * self.cumulative[-1])]
 
+    def sample(self, rng: random.Random, count: int) -> list[object]:
+        """count різних елементів із ймовірностями за вагами (Efraimidis — Spirakis):
+        ключ u^(1/w), беруться найбільші. На відміну від повторних pick, не дає
+        менше елементів, коли одна вага переважає решту."""
+        weights = [b - a for a, b in zip([0.0, *self.cumulative[:-1]], self.cumulative)]
+        keyed = sorted(((rng.random() ** (1.0 / w), i) for i, w in enumerate(weights)), reverse=True)
+        return [self.items[i] for _, i in keyed[:count]]
+
 
 class GeneratorSource:
     """Реалізує порт `DocumentSource`.
@@ -257,9 +297,10 @@ class GeneratorSource:
     MAX_RATE = 5000
     #: Пакет не перевищує 500 документів, за малих швидкостей — раз на секунду
     MAX_BATCH = 500
-    #: Калібрування за реальними даними (п. 2.7.3): частка безкоштовних модулів
-    #: на itch.io і частка множинного авторства
-    FREE_SHARE = 0.37
+    #: Частка безкоштовних модулів і частка множинного авторства (п. 2.7.3).
+    #: Генератор калібрує їх за adventures.csv (calibrate_catalog_shares); ці
+    #: значення — повного каталогу від 22.10.2026, для запуску без CSV
+    FREE_SHARE = 0.51
     MULTI_AUTHOR_SHARE = 0.01
     #: Імовірність продовження ланцюжка кампанії того самого світу (таблиця 2.13)
     CHAIN_SHARE = 0.3
@@ -279,6 +320,8 @@ class GeneratorSource:
         tags: list[str] | None = None,
         party_median: int = 4,
         seed: int | None = None,
+        free_share: float | None = None,
+        multi_author_share: float | None = None,
     ) -> None:
         self._profiles = profiles or DEFAULT_PROFILES
         self._text_builder = text_builder
@@ -292,6 +335,8 @@ class GeneratorSource:
         self._publishers = publishers or []
         self._tags = set(tags or [])
         self._party_median = party_median
+        self._free_share = self.FREE_SHARE if free_share is None else free_share
+        self._multi_author_share = self.MULTI_AUTHOR_SHARE if multi_author_share is None else multi_author_share
         self._rng = random.Random(seed)
         self._authors = _Weighted([(a, a["weight"]) for a in self._author_pool])
         self._systems_choice = _Weighted([(s, s.get("weight", 1.0)) for s in self._systems])
@@ -411,7 +456,7 @@ class GeneratorSource:
         system = self._systems_choice.pick(rng) if self._systems_choice else {}
         synopsis = self._text_builder.generate(rng.randint(3, 5), profile.keywords)
         full_text = self._full_text(profile, locations, monsters, synopsis)
-        price = 0.0 if rng.random() < self.FREE_SHARE else round(math.exp(rng.gauss(1.6, 0.6)), 2)
+        price = 0.0 if rng.random() < self._free_share else round(math.exp(rng.gauss(1.6, 0.6)), 2)
         authors = self._pick_authors()
         return {
             "kind": DocumentKind.ADVENTURE.value,
@@ -481,8 +526,8 @@ class GeneratorSource:
         return list(picked.values())
 
     def _pick_authors(self) -> list[dict]:
-        """Вибір за законом Ципфа: 1 автор — 99%, 2–3 — 1%."""
-        count = 1 if self._rng.random() >= self.MULTI_AUTHOR_SHARE else self._rng.randint(2, 3)
+        """Вибір за законом Ципфа; 2–3 автори — з часткою множинного авторства каталогу."""
+        count = 1 if self._rng.random() >= self._multi_author_share else self._rng.randint(2, 3)
         picked: dict[str, dict] = {}
         while len(picked) < count:
             author = self._authors.pick(self._rng)
@@ -493,12 +538,7 @@ class GeneratorSource:
         """2–5 тегів із розподілу профілю, лише з довідника тегів."""
         choice = self._profile_tags[profile.name]
         wanted = min(self._rng.randint(2, 5), len(choice.items))
-        picked: dict[str, None] = {}
-        for _ in range(wanted * 6):
-            picked[choice.pick(self._rng)] = None
-            if len(picked) >= wanted:
-                break
-        return list(picked)
+        return [str(tag) for tag in choice.sample(self._rng, wanted)]
 
     def _pick_setting(self, profile: ThemeProfile) -> dict | None:
         choice = self._profile_settings[profile.name]

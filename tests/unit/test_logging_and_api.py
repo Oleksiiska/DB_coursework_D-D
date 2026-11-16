@@ -140,9 +140,15 @@ def test_search_and_error_translation(client) -> None:
 
 
 def test_static_page_and_manual_lists(client) -> None:
+    """Сторінка застосунку з п'ятьма розділами (п. 4.9) і всі її ресурси —
+    скрипти, стилі й шрифти — віддаються з того самого процесу api."""
     page = client.get("/")
-    assert page.status_code == 200 and "Моніторинг" in page.text and "chart.umd.min.js" in page.text
-    assert client.get("/static/chart.umd.min.js").status_code == 200
+    assert page.status_code == 200
+    for section in ("Пригоди", "Бестіарій", "Хроніки", "Зала слави", "Кузня"):
+        assert section in page.text
+    for asset in ("chart.umd.min.js", "fx.js", "app.js", "styles.css", "fonts/forum-cyrillic-400-normal.woff2"):
+        assert asset in page.text
+        assert client.get(f"/static/{asset}").status_code == 200
     assert len(client.get("/static/data/settings.json").json()) == 13
 
 

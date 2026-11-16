@@ -103,6 +103,14 @@ def message(combat_id: str, ts: float, author: str, content: str, bot: bool = Fa
                  author_name="Avrae" if bot else f"Player {author}", author_bot=bot, content=content)
 
 
+def command(combat_id: str, ts: float, name: str, author: str, said_at: float | None = None, prefix: str = "!") -> dict:
+    """Подія command; said_at — час повідомлення, яким команду викликано (той самий message_id)."""
+    body = {"command_name": name, "author_id": author, "prefix": prefix}
+    if said_at is not None:
+        body["message_id"] = int(said_at * 1000)
+    return event(combat_id, "command", ts, **body)
+
+
 def state(combat_id: str, ts: float, dm: int, round_: int, combatants: int, channel: str = "42") -> dict:
     return event(combat_id, "combat_state_update", ts, data={
         "channel": channel, "summary": 1, "dm": dm, "options": {}, "round": round_, "turn": 0,
@@ -163,13 +171,21 @@ def raw_files() -> dict[str, list[dict]]:
             message(COMBAT_A, a + 11, "100", "The skeleton crumbles to dust."),
             event(COMBAT_A, "command", a + 12, command_name="check", author_id="111"),
             state(COMBAT_A, a + 13, 100, 2, 4),
+            # ведучий викликає команду: Avrae пише і подію message, і подію command з тим самим message_id
+            message(COMBAT_A, a + 14, "100", "!i a SK1 shortsword -t Verity"),
+            command(COMBAT_A, a + 14.5, "init attack", "100", said_at=a + 14),
+            # невдалий виклик: події command немає, але це команда, а не репліка
+            message(COMBAT_A, a + 15, "100", "!init nxt"),
             event(COMBAT_A, "combat_end", a + 1 + 1800),
         ],
         COMBAT_B: [
             event(COMBAT_B, "combat_start", b),
             state(COMBAT_B, b + 1, 200, 1, 3, channel="43"),
             message(COMBAT_B, b + 2, "200", "Wolves howl in the dark."),
-            event(COMBAT_B, "command", b + 3, command_name="init next", author_id="200"),
+            # сервер із власним префіксом «.»: його видно з події command
+            message(COMBAT_B, b + 2.5, "200", ".init next"),
+            command(COMBAT_B, b + 3, "init next", "200", said_at=b + 2.5, prefix="."),
+            message(COMBAT_B, b + 4, "200", ".i a WO1 bite"),
             event(COMBAT_B, "combat_end", b + 9 * 3600),
         ],
         RAW_ONLY: [event(RAW_ONLY, "combat_start", 1650300000.0)],
@@ -208,7 +224,7 @@ ROBOTS = "User-agent: *\nDisallow: /embed/\nDisallow: /search\nDisallow: /game/d
 
 LIST_PAGE = """<html><body>
 <div class="filter_group"><span>Theme</span><a href="/physical-games/tag-horror">Horror</a></div>
-<div class="filter_group"><span>Format</span><a href="/physical-games/tag-one-shot">One-shot</a></div>
+<div class="sidebar_block"><h4>Format</h4><ul><li><a href="/physical-games/tag-one-shot">One-shot</a></li></ul></div>
 <div class="game_cell" data-game_id="945604"><a class="title game_link" href="https://mira.itch.io/the-drowned-chapel">A</a></div>
 <div class="game_cell" data-game_id="777001"><a class="title game_link" href="https://duo.itch.io/goblin-market">B</a></div>
 </body></html>"""
@@ -221,7 +237,10 @@ def card_page(path: str, title: str, authors: list[tuple[str, str]], tags: list[
     rows = ["<tr><td>Status</td><td>Released</td></tr>",
             f"<tr><td>Authors</td><td>{author_links}</td></tr>",
             f"<tr><td>Tags</td><td>{tag_links}</td></tr>",
-            "<tr><td>Rating</td><td>Rated 4.5 out of 5 stars (12 total ratings)</td></tr>",
+            # розмітка itch.io: кількість оцінок у вкладеному span — після вилучення тексту «( 12 total ratings )»
+            '<tr><td>Rating</td><td><div class="aggregate_rating"><span class="screenreader_only">Rated 4.5 out of 5 '
+            'stars</span></div><span class="rating_count">(12<span class="screenreader_only"> total ratings</span>)'
+            '</span></td></tr>',
             "<tr><td>Content</td><td>Violence</td></tr>"]
     if session:
         rows.append(f"<tr><td>Average session</td><td>{session}</td></tr>")
@@ -247,11 +266,33 @@ def snapshot_pages() -> dict[str, str]:
         "https://duo.itch.io/goblin-market": card_page(
             "games/777001", "Goblin Market", [("Duo", "https://duo.itch.io"), ("Mira", "https://mira.itch.io")],
             ["horror", "dnd"], None, "A few seconds", 0),
-        "https://mira.itch.io": '<html><body><div class="user_profile">Mira writes gothic horror.</div></body></html>',
-        "https://duo.itch.io": "<html><head><meta name=\"description\" content=\"Two friends.\"></head></html>",
-        "https://itch.io/physical-games/tag-horror": '<div class="tag_description">Scary tabletop games</div>',
-        "https://itch.io/physical-games/tag-one-shot": "<html></html>",
+        "https://mira.itch.io": profile_page("Mira", '<div class="user_profile formatted"><p>Mira writes gothic '
+                                                     'horror.</p></div>'),
+        "https://duo.itch.io": profile_page("Duo", ""),
+        "https://itch.io/physical-games/tag-horror": tag_page(
+            "horror", '<div class="tag_description"><p>Scary tabletop games</p></div>'),
+        "https://itch.io/physical-games/tag-one-shot": tag_page("One-shot", ""),
     }
+
+
+def profile_page(name: str, bio: str) -> str:
+    """Профіль за розміткою itch.io: посилання автора, власний текст (якщо є) і роботи з цінами."""
+    return (f'<html><body><div class="inner_column profile_content"><div class="columns">'
+            f'<div class="column profile_column"><div class="user_links user_links_widget">'
+            f'<span class="link_group">{name}</span><span class="link_group">@{name.lower()}</span></div>{bio}</div>'
+            f'<div class="column game_column"><div class="game_grid_widget user_game_grid">'
+            f'<div class="game_cell"><a class="title game_link" href="https://{name.lower()}.itch.io/x">X</a>'
+            f'<div class="price_value">$4.99</div></div></div></div></div></div></body></html>')
+
+
+def tag_page(name: str, description: str) -> str:
+    """Сторінка тегу за розміткою itch.io: шаблонні meta description і рядок пошуку;
+    власний опис — лише в блоці tag_description."""
+    return (f'<html><head><meta name="description" content="Find physical games tagged {name} like The Drowned '
+            f'Chapel on itch.io, the indie game hosting marketplace"></head><body><div class="browse_header">'
+            f'<p class="search_description">Explore physical games tagged {name} on itch.io · <a href="/docs">Upload '
+            f'your physical games</a> to itch.io to have them show up here.</p></div>'
+            f'<div class="filter_tag">{description}</div></body></html>')
 
 
 def build_snapshot(path: Path) -> Path:

@@ -1,9 +1,9 @@
 """Звіт вимірювань: числа, на які спираються розділ 2 і додаток А.
 
-Кожен вимір прив'язано до місця у звіті (таблиця чи підрозділ) і
-поставлено поруч зі значенням, наведеним у версії звіту v4, тож після
-підготовки даних видно, які числа збіглися, а які слід оновити. Результат —
-``measurements.md`` для читання і ``measurements.json`` для подальшої обробки.
+Кожен вимір прив'язано до місця у звіті (таблиця чи підрозділ), тож після
+повторної підготовки даних видно, яке число в якому місці звіту перевірити.
+Результат — ``measurements.md`` для читання і ``measurements.json`` для
+подальшої обробки.
 """
 
 from __future__ import annotations
@@ -32,13 +32,22 @@ def number(value: float | int | None, digits: int = 1) -> str:
 
 
 def percent(part: int, total: int, digits: int = 1) -> str:
-    """Частка у відсотках з одним знаком після коми; нульовий дробовий знак не пишеться."""
+    """Частка у відсотках з одним знаком після коми; нульовий дробовий знак не пишеться.
+    Неповна частка не округлюється до 100%, ненульова — до 0%: знаків додається,
+    доки це не так (6 104 з 6 106 — «99,97%», а не «100%»)."""
     if not total:
         return "—"
-    text = f"{100 * part / total:.{digits}f}".replace(".", ",")
-    if digits and text.endswith("," + "0" * digits):
+    value = 100 * part / total
+    places = digits
+    text = f"{value:.{places}f}"
+    while places < digits + 3 and ((part < total and float(text) >= 100) or (part > 0 and float(text) <= 0)):
+        places += 1
+        text = f"{value:.{places}f}"
+    if places > digits:
+        text = text.rstrip("0").rstrip(".")
+    elif digits and text.endswith("." + "0" * digits):
         text = text[: -(digits + 1)]
-    return text + "%"
+    return text.replace(".", ",") + "%"
 
 
 def share(part: int, total: int, digits: int = 1) -> str:
@@ -95,7 +104,6 @@ class Measure:
     where: str
     what: str
     value: str
-    reported: str | None = None
     raw: Any = None
 
 
@@ -121,8 +129,8 @@ class Measurements:
             self.sections[key] = Section(title)
         return self.sections[key]
 
-    def add(self, key: str, where: str, what: str, value: str, reported: str | None = None, raw: Any = None) -> None:
-        self.sections[key].measures.append(Measure(where, what, value, reported, raw))
+    def add(self, key: str, where: str, what: str, value: str, raw: Any = None) -> None:
+        self.sections[key].measures.append(Measure(where, what, value, raw))
 
     def note(self, key: str, text: str) -> None:
         self.sections[key].notes.append(text)
@@ -146,8 +154,8 @@ class Measurements:
         lines = [
             "# Виміри підготовлених даних",
             "",
-            f"Підготовку виконано {self.started_at:%d.%m.%Y %H:%M} UTC. Колонка «Звіт v4» — значення, "
-            "наведене у версії звіту від 22.10.2026; порожня — у звіті числа немає або там стоїть TODO.",
+            f"Підготовку виконано {self.started_at:%d.%m.%Y %H:%M} UTC. Колонка «Де у звіті» вказує "
+            "підрозділ або таблицю, що спирається на вимір.",
             "",
             "## Кроки",
             "",
@@ -161,9 +169,9 @@ class Measurements:
         for section in self.sections.values():
             lines += ["", f"## {section.title}", ""]
             if section.measures:
-                lines += ["| Де у звіті | Показник | Виміряно | Звіт v4 |", "|---|---|---|---|"]
+                lines += ["| Де у звіті | Показник | Виміряно |", "|---|---|---|"]
                 for m in section.measures:
-                    lines.append(f"| {_md(m.where)} | {_md(m.what)} | {_md(m.value)} | {_md(m.reported or '')} |")
+                    lines.append(f"| {_md(m.where)} | {_md(m.what)} | {_md(m.value)} |")
             for text in section.notes:
                 lines += ["", text]
         return "\n".join(lines) + "\n"

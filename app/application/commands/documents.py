@@ -12,6 +12,7 @@ from __future__ import annotations
 import dataclasses
 import enum
 import json
+import math
 import re
 import types
 import typing
@@ -84,12 +85,17 @@ def parse_datetime(value: Any) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+#: Межі цілого, яке зберігають усі три сховища (BSON int64, long рушія, Integer Neo4j)
+INT64_MIN, INT64_MAX = -(2**63), 2**63 - 1
+
+
 def coerce(value: Any, hint: Any, name: str = "") -> Any:
     """Значення плоского документа → тип поля сутності.
 
     Відсутнє значення — None (порожній рядок не зберігається, інакше
     фільтри дали б хибні результати, п. 2.11). Помилка формату — ValueError
-    з назвою поля: документ потрапляє в журнал браку.
+    з назвою поля: документ потрапляє в журнал браку. Те саме — для числа,
+    якого не прийме сховище (ціле поза 64 бітами, нескінченність).
     """
     if value is None or (isinstance(value, str) and not value.strip()):
         return _empty(hint)
@@ -97,6 +103,8 @@ def coerce(value: Any, hint: Any, name: str = "") -> Any:
     if origin in (typing.Union, types.UnionType):
         options = [a for a in typing.get_args(hint) if a is not type(None)]
         return coerce(value, options[0], name) if len(options) == 1 else value
+    if hint is int or hint is float:
+        return _number(value, hint, name)
     try:
         if isinstance(hint, type) and dataclasses.is_dataclass(hint):
             data = json.loads(value) if isinstance(value, str) else value
@@ -115,10 +123,6 @@ def coerce(value: Any, hint: Any, name: str = "") -> Any:
             return {str(k): coerce(v, item_hint, name) for k, v in dict(data).items()}
         if hint is bool:
             return _boolean(value)
-        if hint is int:
-            return int(float(value)) if isinstance(value, str) else int(value)
-        if hint is float:
-            return float(value)
         if hint is datetime:
             return parse_datetime(value)
         if hint is str:
@@ -126,6 +130,23 @@ def coerce(value: Any, hint: Any, name: str = "") -> Any:
     except (TypeError, ValueError, json.JSONDecodeError) as error:
         raise ValueError(f"{name or 'поле'}: невірний формат {value!r}") from error
     return value
+
+
+def _number(value: Any, hint: type, name: str) -> int | float:
+    """Число, яке приймуть усі три сховища: ціле — у межах 64 біт, дробове —
+    скінченне. Інакше один документ зупиняв би запис усього пакета."""
+    try:
+        if hint is int:
+            number: int | float = int(float(value)) if isinstance(value, str) else int(value)
+        else:
+            number = float(value)
+    except (TypeError, ValueError, OverflowError) as error:
+        raise ValueError(f"{name or 'поле'}: невірний формат {value!r}") from error
+    if hint is int and not INT64_MIN <= number <= INT64_MAX:
+        raise ValueError(f"{name or 'поле'}: ціле {value!r} поза межами 64-бітного цілого")
+    if hint is float and not math.isfinite(number):
+        raise ValueError(f"{name or 'поле'}: нескінченне або невизначене число {value!r}")
+    return number
 
 
 def build_entity(kind: DocumentKind, document: dict[str, Any]) -> Any:

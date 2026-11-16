@@ -55,6 +55,136 @@ def test_card_is_parsed_into_an_adventure() -> None:
     assert review["review_id"] == "777" and review["posted_at"].startswith("2026-10-08")
 
 
+def test_rating_count_survives_the_nested_markup_of_itch_io() -> None:
+    """Кількість оцінок itch.io стоїть у вкладеному span; після вилучення тексту
+    між дужками й числом з'являються пробіли («( 25 total ratings )»)."""
+    row = ('<tr><td>Rating</td><td><div class="aggregate_rating" title="4.83"><span class="screenreader_only">'
+           'Rated 4.8 out of 5 stars</span><span class="star_fill"></span></div><span class="rating_count">'
+           '(1,025<span class="screenreader_only"> total ratings</span>)</span></td></tr>')
+    html = CARD.replace(
+        '<tr><td>Rating</td><td><div class="aggregate_rating">Rated 4.8 out of 5 stars (25 total ratings)</div></td></tr>', row)
+    doc = parse_card(html, "https://mira.itch.io/the-drowned-chapel", datetime.now(timezone.utc)).document
+    assert (doc["rating_avg"], doc["ratings_count"]) == (4.8, 1025)
+
+
+def test_json_ld_product_gives_rating_and_price() -> None:
+    """schema.org Product у JSON-LD — перше джерело оцінки й ціни; рядок Rating і кнопка купівлі — запасні."""
+    ld = ('<script type="application/ld+json">{"@context":"http://schema.org/","@type":"Product","name":"The Drowned '
+          'Chapel","aggregateRating":{"@type":"AggregateRating","ratingValue":"4.6","ratingCount":7},'
+          '"offers":{"@type":"Offer","price":"5.00","priceCurrency":"USD"}}</script>')
+    html = (CARD.replace("</head>", ld + "</head>")
+            .replace('<div class="buy_row"><span class="dollars">£4.00</span></div>', "")
+            .replace('<tr><td>Rating</td><td><div class="aggregate_rating">Rated 4.8 out of 5 stars (25 total ratings)'
+                     '</div></td></tr>', ""))
+    doc = parse_card(html, "https://mira.itch.io/the-drowned-chapel", datetime.now(timezone.utc)).document
+    assert (doc["rating_avg"], doc["ratings_count"], doc["price"]) == (4.6, 7, 5.0)
+
+
+#: Розмітка сторінки тегу itch.io зі знімка обходу 22.10.2026 (скорочено): meta description —
+#: шаблон із переліком робіт; рядок пошуку повторює власний опис обрізаним; сам опис —
+#: у блоці tag_description бічного фільтра, і він є лише в частини тегів
+TAG_PAGE = """<html><head>
+<meta name="description" content="Find physical games tagged {name} like Troika! Numinous Edition, Prime Material on
+itch.io, the indie game hosting marketplace">
+<meta property="og:description" content="Find physical games tagged {name} like Troika! Numinous Edition on itch.io,
+the indie game hosting marketplace"></head><body>
+<div class="browse_header"><h2><span>Top</span> Physical games <span>tagged {name}</span></h2>
+<p class="search_description">Explore physical games tagged {name} on itch.io.{short} · <a href="/docs/creators/faq">
+Upload your physical games</a> to itch.io to have them show up here.</p></div>
+<div class="browse_filters"><div class="filter_tag">{description}</div></div>
+<div class="game_grid_widget"><div class="game_cell" data-game_id="1"><a class="title game_link"
+href="https://a.itch.io/x">X</a></div></div></body></html>"""
+
+
+def test_tag_description_is_the_own_text_of_itch_io_not_its_page_templates() -> None:
+    """Власний опис тегу — блок tag_description; рядок пошуку й meta description —
+    шаблони сайту, тож тег без блоку (або з порожнім блоком) опису не має."""
+    from app.infrastructure.sources.crawler_source import parse_tag_page, strip_tag_boilerplate
+
+    own = '"Old School Renaissance" or "Old School Revival." Tabletop RPGs inspired by the 1970s'
+    described = TAG_PAGE.format(name="OSR", short=' "Old School Renaissance" or "Old School Re',
+                                description=f'<div class="tag_description"><p>{own}</p></div>')
+    assert parse_tag_page(described) == own
+    for block in ("", '<div class="tag_description"></div>'):
+        assert parse_tag_page(TAG_PAGE.format(name="acid-fantasy", short="", description=block)) is None
+    assert strip_tag_boilerplate("Find physical games tagged OSR like Mausritter, FIST: Ultra Edition on itch.io, "
+                                 "the indie game hosting marketplace") is None
+
+
+#: Профіль автора itch.io зі знімка обходу (скорочено): посилання автора, власний текст
+#: профілю (user_profile) і перелік робіт із цінами лежать в одному блоці profile_content
+PROFILE_PAGE = """<html><body><div class="inner_column profile_content"><div class="columns">
+<div class="column profile_column"><div class="user_links user_links_widget"><span class="link_group">Questing Beast
+</span><span class="link_group"><a href="https://www.youtube.com/questingbeast">www.youtube.com/questingbeast</a></span>
+</div>{bio}</div>
+<div class="column game_column"><div class="game_grid_widget user_game_grid"><div class="game_cell has_cover">
+<a class="title game_link" href="https://questingbeast.itch.io/knave">Knave</a> <div class="price_value">$2.99</div>
+<div class="game_text">A streamlined, elegant OSR RPG system</div></div></div></div></div></div></body></html>"""
+
+
+def test_author_bio_is_only_the_own_text_of_the_profile() -> None:
+    """Посилання автора й перелік його робіт із цінами до біографії не входять."""
+    from app.infrastructure.sources.crawler_source import parse_profile
+
+    bio = ('<div class="user_profile formatted"><h1>Questing Beast Games</h1><p>Watch my YouTube videos, '
+           'support my work on Patreon.</p></div>')
+    assert parse_profile(PROFILE_PAGE.format(bio=bio)) == (
+        "Questing Beast Games Watch my YouTube videos, support my work on Patreon.")
+    assert parse_profile(PROFILE_PAGE.format(bio="")) is None
+
+
+def test_system_prefers_the_title_synopsis_and_tags_and_the_specific_system() -> None:
+    """OSR — рух, а не система; окрема система має перевагу над D&D 5e, яку
+    модулі згадують для сумісності; опис — лише запасне джерело."""
+    import json
+    from pathlib import Path
+
+    from app.infrastructure.sources.crawler_source import _system
+
+    systems = json.loads((Path(__file__).resolve().parents[2] / "app" / "data" / "systems.json")
+                         .read_text(encoding="utf-8"))
+
+    def name(primary: str, secondary: str = "") -> str | None:
+        found = _system(primary, systems, secondary)
+        return f"{found['system']} {found['edition'] or ''}".strip() if found else None
+
+    assert name("Tomb of the Acid Lich dnd osr troika ttrpg") is None
+    assert name("A one-shot for Shadowdark and 5e dnd shadowdark 5e") == "Shadowdark RPG 1e"
+    assert name("Updated for D&D 2024 rules 5e") == "Dungeons & Dragons 5e (2024)"
+    assert name("dnd 5th edition one shot") == "Dungeons & Dragons 5e (2014)"
+    assert name("An OSR dungeon dnd osr", "Stats for OSE and a 5e conversion") == "Old-School Essentials Classic Fantasy"
+    assert name("A Shadowdark crawl shadowdark", "Includes a 5e conversion") == "Shadowdark RPG 1e"
+    assert name("A system agnostic city dnd system agnostic") == "System-agnostic"
+    # назва «Dungeons & Dragons» спільна для двох редакцій і редакції не визначає
+    assert name("Original Dungeons & Dragons by Gygax and Arneson") is None
+
+
+def test_canadian_price_is_converted_to_dollars() -> None:
+    ld = ('<script type="application/ld+json">{"@type":"Product","name":"X","offers":{"@type":"Offer",'
+          '"price":"10.00","priceCurrency":"CAD"}}</script>')
+    doc = parse_card(CARD.replace("</head>", ld + "</head>"), "https://mira.itch.io/x", datetime.now(timezone.utc)).document
+    assert doc["price"] == 7.3
+
+
+def test_tag_groups_are_found_whatever_wraps_the_heading() -> None:
+    """Заголовок групи — обгортка переліку або окремий рядок перед ним; посилання
+    в картках і поза групами групи не отримують."""
+    html = """<html><body>
+    <div class="tag_bar"><a href="/physical-games/tag-osr">OSR</a></div>
+    <div class="browse_sidebar">
+      <div class="filter_group"><div class="filter_label">Types</div>
+        <div class="filter_options"><a href="/physical-games/tag-adventure">Adventure</a></div></div>
+      <h4>Gameplay</h4><ul><li><a href="/physical-games/tag-solo?page=1">Solo</a></li></ul>
+    </div>
+    <div class="game_grid_widget"><div class="game_cell" data-game_id="1">
+      <a class="title game_link" href="https://a.itch.io/x">X</a><a href="/physical-games/tag-horror">horror</a></div></div>
+    <div class="footer"><a href="/physical-games/tag-zine">Zine</a></div>
+    </body></html>"""
+    links, categories = parse_list_page(html, "https://itch.io")
+    assert [link.game_id for link in links] == ["1"]
+    assert categories == {"adventure": "Types", "solo": "Gameplay"}
+
+
 def test_card_without_itch_path_is_a_block_page() -> None:
     with pytest.raises(CardBlocked):
         parse_card("<html><body>Are you a robot?</body></html>", "https://x.itch.io/y", datetime.now(timezone.utc))
@@ -146,6 +276,28 @@ async def test_generator_rate_counts_authors_as_documents() -> None:
     assert 600 <= len(documents) <= 610
 
 
+async def test_generator_takes_free_and_coauthor_shares_from_the_catalog() -> None:
+    """Частки безкоштовних модулів і множинного авторства калібруються за
+    adventures.csv так само, як розмір партії й пул авторів (п. 2.7.3)."""
+    from app.infrastructure.sources.generator_source import calibrate_catalog_shares
+
+    rows = ([{"price": "", "author_ids": '["a"]'}] * 30 + [{"price": "4.99", "author_ids": '["a", "b"]'}] * 10
+            + [{"price": "2.5", "author_ids": '["c"]'}] * 60)
+    assert calibrate_catalog_shares(rows) == (0.3, 0.1)
+    assert calibrate_catalog_shares(rows[:5]) == (GeneratorSource.FREE_SHARE, GeneratorSource.MULTI_AUTHOR_SHARE)
+    builder = MarkovTextBuilder()
+    builder.train([])
+    source = GeneratorSource([], builder, [], GeneratorSource.synthetic_authors(400, 1.0),
+                             settings=[{"setting_id": "s1", "genre": "gothic horror", "tone": "dark"}], tags=["horror"],
+                             seed=5, free_share=1.0, multi_author_share=1.0)
+    await source.set_rate(200)
+    stream = source.stream()
+    documents = (await stream.__anext__()).documents
+    await stream.aclose()
+    adventures = [d for d in documents if d["kind"] == "adventure"]
+    assert adventures and all(d["price"] == 0.0 and 2 <= len(d["author_ids"]) <= 3 for d in adventures)
+
+
 def test_synthetic_author_pool_is_the_same_in_every_instance() -> None:
     first, second = GeneratorSource.synthetic_authors(50, 1.0), GeneratorSource.synthetic_authors(50, 1.0)
     assert first == second and first[0]["weight"] > first[-1]["weight"]
@@ -188,3 +340,19 @@ async def test_crawler_reports_every_page_but_publishes_documents_in_batches(mon
     assert sum(b.stats.succeeded for b in cards) == 5
     lists = [b for b in batches if b.stats.stage == "lists"]
     assert [b.stats.completed for b in lists] == [1, 1]  # остання сторінка списку не потрапляє до карток
+
+
+def test_keyword_start_states_are_found_once_per_profile() -> None:
+    """Пошук початкових станів із ключовими словами — один раз на набір слів:
+    перебір усього корпусу на кожне речення обмежував генератор сотнями
+    документів за секунду (виміряно 22.10.2026: ≈ 180 док/с за цілі 5000)."""
+    from app.infrastructure.sources.generator_source import MarkovTextBuilder
+
+    builder = MarkovTextBuilder()
+    builder.train(["The cursed crypt hides undead horrors.", "A haunted manor waits in the fog.",
+                   "Undead knights guard the cursed crypt."] * 3)
+    first = builder.generate(2, ["cursed", "undead"])
+    builder.generate(3, ["undead", "cursed"])
+    assert first and len(builder._keyed) == 1
+    assert all({"cursed", "undead"} & {w.lower().strip(".") for w in state}
+               for state in builder._keyed[frozenset({"cursed", "undead"})])

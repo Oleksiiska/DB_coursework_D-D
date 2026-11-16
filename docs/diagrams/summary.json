@@ -25,7 +25,7 @@
     "generalization": 16,
     "realization": 28,
     "reference": 11,
-    "use": 110
+    "use": 100
   },
   "realizations": [
     "AdventureFilters ..|> SearchSpecification",

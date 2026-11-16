@@ -171,10 +171,11 @@ def test_encounters_take_metadata_and_narrative_from_raw_events(prepared) -> Non
     a = encounters[fx.COMBAT_A]
     assert a["started_at"] == "2022-04-15T05:20:00+00:00"  # перша половина імені файлу
     assert (a["duration_seconds"], a["dm_hash"], a["channel_hash"]) == ("1800", "100", "42")
-    assert (a["rounds_count"], a["participants_count"], a["messages_count"]) == ("2", "5", "5")
-    # наратив — лише повідомлення ведучого без ознаки бота
+    assert (a["rounds_count"], a["participants_count"], a["messages_count"]) == ("2", "5", "7")
+    # наратив — повідомлення ведучого без ознаки бота й без викликів команд
     assert a["narrative_text"] == "The crypt door groans open.\nThe skeleton crumbles to dust."
-    assert json.loads(a["commands"]) == ["init attack", "cast", "init attack", "check"]
+    assert encounters[fx.COMBAT_B]["narrative_text"] == "Wolves howl in the dark."
+    assert json.loads(a["commands"]) == ["init attack", "cast", "init attack", "check", "init attack"]
     assert sorted(json.loads(a["player_character_ids"])) == sorted([character_id("Verity", "111"),
                                                                     character_id("Keya", "222")])
     assert json.loads(a["derived_fields"]) == ["duration_seconds", "messages_count"]
@@ -183,7 +184,11 @@ def test_encounters_take_metadata_and_narrative_from_raw_events(prepared) -> Non
     assert c["started_at"] == "2022-04-17T12:53:20+00:00" and c["narrative_text"] == "" and c["ended_at"] == ""
     measures = {(x.where, x.what): x.value for s in m.sections.values() for x in s.measures}
     assert measures[("п. 2.5.2", "боїв у каталозі data (сирі події)")] == "3"
-    assert measures[("п. 2.5.5", "повідомлень з автором data.dm / з ознакою бота")] == "4 / 25% (1 з 4)"
+    assert measures[("п. 2.5.5", "повідомлень з автором data.dm")] == "8"
+    assert measures[("п. 2.5.5", "з них виклики команд: за message_id подій command, alias_resolution, "
+                                 "snippet_resolution / лише за префіксом")] == "25% (2 з 8) / 25% (2 з 8)"
+    assert measures[("п. 2.5.5", "з них з ознакою бота author_bot / порожні")] == "12,5% (1 з 8) / 0% (0 з 8)"
+    assert measures[("п. 2.5.5", "реплік ведучого після фільтра / символів")] == "3 / 81"
     assert measures[("табл. 2.8", "race = назва монстра SRD, class заповнений (хибні спрацювання)")].startswith("1 ")
 
 
@@ -223,7 +228,8 @@ async def test_catalog_is_rebuilt_from_a_crawl_snapshot(tmp_path: Path) -> None:
     snapshot = fx.build_snapshot(tmp_path / "raw" / "itch" / "crawl-20261022-1000-full.jsonl.gz")
     result = await catalog.crawl(Settings(), [], tmp_path / "raw", replay=snapshot)
     assert sorted(a["itch_id"] for a in result.adventures) == ["games/777001", "games/945604"]
-    assert {a["name"]: a["bio"] for a in result.authors} == {"Mira": "Mira writes gothic horror.", "Duo": "Two friends."}
+    # біографія — лише власний текст профілю: у Duo його немає, посилання й роботи не рахуються
+    assert {a["name"]: a["bio"] for a in result.authors} == {"Mira": "Mira writes gothic horror.", "Duo": None}
     assert {t["name"]: (t["description"], t["category"]) for t in result.tags} == {
         "horror": ("Scary tabletop games", "Theme"), "one-shot": (None, "Format"), "dnd": (None, None)}
     counts = catalog.write_csv(result, tmp_path / "csv")
@@ -233,10 +239,14 @@ async def test_catalog_is_rebuilt_from_a_crawl_snapshot(tmp_path: Path) -> None:
     m = Measurements()
     catalog.measure(result, m, None)
     measures = {x.what: x.value for x in m.sections["catalog"].measures}
-    assert measures["модулів за тегом dnd"] == "2" and measures["валюти цін"] == "£ (1)"
+    assert measures["модулів за тегом dnd"] == "2" and measures["валюти цін (offers.priceCurrency)"] == "GBP (1)"
     assert measures["множинне авторство"] == "50% (1 з 2)"
     assert measures["значення Average session"] == "A few hours (1), A few seconds (1)"
     assert measures["robots.txt: заборонені маршрути"] == "/embed/, /search, /game/download/"
+    # кількість оцінок — із вкладеного span рядка Rating
+    assert measures["кількість оцінок"] == "100% (2 з 2)"
+    assert measures["бічний фільтр у HTML першої сторінки списку: заголовки груп / посилань на теги поза картками "
+                    "/ тегів із групою"] == "Format, Theme / 2 / 2"
     assert check.check(tmp_path / "csv", m, {}) == 0
 
 
@@ -389,3 +399,11 @@ def test_interrupted_crawl_is_not_replayed_as_complete(tmp_path: Path) -> None:
     assert CatalogStep(args, Settings(), []).choose_replay() == sample
     args.catalog_fresh = True
     assert CatalogStep(args, Settings(), []).choose_replay() is None
+
+
+def test_numbers_no_store_can_hold_become_null() -> None:
+    """Жартівливе «999…9» ведучого: учасник лишається, але його hp — null,
+    а не документ, який зупинив би запис пакета."""
+    assert parse_hp("<99999999999999999999/99999999999999999999 HP; Healthy>") == (None, None, None, "oversized")
+    assert parse_classes("Fighter 99999999999999999999") == [("Fighter", None)]
+    assert parse_hp("<9223372036854775807 HP>")[:2] == (2**63 - 1, None)

@@ -120,7 +120,7 @@ class CatalogStep:
                 sample = self.args.catalog_sample
                 log.info("каталог: обхід itch.io за тегом %s (%s); затримка 1,5–3 с між запитами",
                          getattr(self.settings, "crawler_tag", "dnd"),
-                         f"вибірка {sample} карток" if sample else "усі картки, близько 2 годин")
+                         f"вибірка {sample} карток, близько 30 хв" if sample else "усі картки, близько 4 годин")
             self.result = asyncio.run(catalog.crawl(self.settings, self.systems, self.args.raw,
                                                     sample=self.args.catalog_sample, replay=self.replay))
             if not self.result.adventures:

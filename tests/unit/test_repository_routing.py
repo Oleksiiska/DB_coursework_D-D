@@ -147,3 +147,25 @@ async def test_document_error_does_not_stop_the_batch() -> None:
     repo, collection = repository(sharded=True)
     collection.bulk_errors = _bulk_errors(11000)  # DuplicateKey
     assert await repo.add_many([StorageCheck.sample(KEYS) for _ in range(3)]) == 2
+
+
+class EncodingCollection(RecordingCollection):
+    """Як драйвер: пакет кодується в BSON до надсилання, тож один документ,
+    якого не можна закодувати, зупиняє весь виклик bulk_write."""
+
+    async def bulk_write(self, operations, ordered: bool = True):
+        import bson
+
+        for op in operations:
+            bson.encode(op._doc)
+        return await super().bulk_write(operations, ordered)
+
+
+async def test_unencodable_document_does_not_stop_the_batch() -> None:
+    repo, _ = repository(sharded=True)
+    collection = EncodingCollection()
+    repo._documents = collection
+    good = [StorageCheck.sample(KEYS) for _ in range(2)]
+    bad = replace(StorageCheck.sample(KEYS), page_count=10**20)
+    assert await repo.add_many([good[0], bad, good[1]]) == 2
+    assert set(collection.documents) == {good[0].adventure_id, good[1].adventure_id}

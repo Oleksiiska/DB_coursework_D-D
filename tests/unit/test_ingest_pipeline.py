@@ -140,3 +140,24 @@ async def test_storage_failure_is_raised_so_the_batch_stays_unacknowledged() -> 
         pass
     else:
         raise AssertionError("збій сховища проковтнуто")
+
+
+async def test_number_the_stores_cannot_hold_rejects_only_its_document() -> None:
+    """Ціле понад 64 біти (жартівливе «999…9» ведучого в FIREBALL) драйвер
+    MongoDB не кодує. Без перевірки такий документ зупиняв пакет, і той
+    надходив повторно без кінця; тепер документ іде в журнал браку, а решта
+    пакета записується."""
+    ingest, parts = handler()
+    participation = {"kind": "participation", "origin": "csv", "encounter_id": "1650000000-a",
+                     "monster_name_raw": "Lich", "hp_current": "12", "hp_max": "12"}
+    batch = [
+        {**participation, "instance_label": "L1", "hp_current": "99999999999999999999",
+         "hp_max": "99999999999999999999"},
+        {**participation, "instance_label": "L2"},
+        {**CRAWLED, "price": "inf"},
+    ]
+    report = await ingest.handle(batch, "csv:participation")
+    assert (report.saved, report.rejected) == (1, 2)
+    reasons = [reason for _, problem in parts["quality_log"].rejected_documents for reason in problem]
+    assert any("поза межами 64-бітного цілого" in reason for reason in reasons)
+    assert any("price" in reason and "нескінченне" in reason for reason in reasons)

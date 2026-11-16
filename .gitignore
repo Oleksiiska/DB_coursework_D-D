@@ -7,3 +7,6 @@ logs/*
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Архіви з даними не комітимо (GitHub: ліміт 100 МБ на файл)
+*.zip

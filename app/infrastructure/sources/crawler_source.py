@@ -7,10 +7,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import random
 import re
 import urllib.robotparser
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncIterator, Callable
@@ -399,15 +401,19 @@ SESSION_HOURS: dict[str, float | None] = {
     "a few seconds": None, "a few minutes": None, "about a half-hour": None,
     "about an hour": 1.0, "a few hours": 3.0, "days or more": 24.0,
 }
-#: Нормалізація валют до долара за фіксованими курсами (п. 2.6.3)
-CURRENCY_TO_USD: dict[str, float] = {"$": 1.0, "USD": 1.0, "£": 1.27, "GBP": 1.27, "€": 1.08, "EUR": 1.08}
+#: Нормалізація валют до долара за фіксованими курсами (п. 2.6.3). Валюти — ті, що трапилися
+#: в offers.priceCurrency повного обходу: USD, GBP, EUR і CAD
+CURRENCY_TO_USD: dict[str, float] = {"$": 1.0, "USD": 1.0, "£": 1.27, "GBP": 1.27, "€": 1.08, "EUR": 1.08,
+                                     "CA$": 0.73, "CAD": 0.73}
 
-_RATING = re.compile(r"Rated\s+([\d.]+)\s+out of 5 stars(?:.*?\((\d[\d,]*)\s+total ratings?\))?", re.I | re.S)
+#: Рядок Rating таблиці картки. Кількість оцінок стоїть в окремому вкладеному span, тож
+#: після вилучення тексту між дужками й числом можуть з'явитися пробіли: «( 25 total ratings )»
+_RATING = re.compile(r"Rated\s+([\d.]+)\s+out of 5 stars(?:.*?\(\s*(\d[\d,]*)\s+total ratings?\s*\))?", re.I | re.S)
 _LEVEL_RANGE = re.compile(r"\blevels?\s+(\d{1,2})\s*(?:-|–|—|to)\s*(\d{1,2})\b", re.I)
 _LEVEL_SINGLE = re.compile(r"\bfor\s+(?:a\s+party\s+of\s+)?(?:level|lvl)\s+(\d{1,2})\s+(?:characters|pcs|adventurers)\b"
                            r"|\b(\d{1,2})(?:st|nd|rd|th)[- ]level\b", re.I)
 _PLAYERS = re.compile(r"\b(\d{1,2})\s*(?:-|–|—|to)\s*(\d{1,2})\s+(?:players|pcs)\b", re.I)
-_PRICE = re.compile(r"(\$|£|€|USD|GBP|EUR)\s*(\d+(?:[.,]\d{1,2})?)|(\d+(?:[.,]\d{1,2})?)\s*(USD|GBP|EUR|€)")
+_PRICE = re.compile(r"(CA\$|\$|£|€|USD|GBP|EUR|CAD)\s*(\d+(?:[.,]\d{1,2})?)|(\d+(?:[.,]\d{1,2})?)\s*(USD|GBP|EUR|CAD|€)")
 _RELATIVE = re.compile(r"(\d+|an?|one)\s+(second|minute|hour|day|week|month|year)s?\s+ago", re.I)
 _UNIT_DAYS = {"second": 1 / 86400, "minute": 1 / 1440, "hour": 1 / 24, "day": 1, "week": 7, "month": 30, "year": 365}
 
@@ -427,15 +433,34 @@ def parse_list_page(html: str, base_url: str) -> tuple[list[CardLink], dict[str,
         anchor = cell.select_one("a.title.game_link") or cell.select_one("a.game_link") or cell.find("a", href=True)
         if anchor and anchor.get("href"):
             links.append(CardLink(urljoin(base_url + "/", anchor["href"]), cell.get("data-game_id")))
+    return links, _tag_categories(soup)
+
+
+#: Заголовки груп тегів бічного фільтра сторінки списку (п. 2.6.5)
+TAG_CATEGORY_HEADINGS = ("Types", "Gameplay", "Format", "Theme")
+_CATEGORY_HEADING = re.compile(r"^\s*(" + "|".join(TAG_CATEGORY_HEADINGS) + r")\s*$")
+
+
+def _tag_categories(soup: Any) -> dict[str, str]:
+    """Тег → група бічного фільтра. Розмітка груп не фіксується: тег належить
+    найближчому заголовку перед ним, якщо обидва лежать в одному блоці, що не
+    містить карток списку. Так заголовок може бути й обгорткою групи, й
+    окремим рядком перед переліком посилань."""
     categories: dict[str, str] = {}
-    for heading in soup.find_all(string=re.compile(r"^\s*(Types|Gameplay|Format|Theme)\s*$")):
-        section = heading.find_parent(["div", "section", "li"])
-        if section is None:
+    for anchor in soup.find_all("a", href=re.compile(r"/tag-")):
+        if anchor.find_parent("div", class_="game_cell") is not None:
             continue
-        for anchor in section.find_all("a", href=re.compile(r"/tag-")):
-            slug = anchor["href"].rsplit("/tag-", 1)[-1].split("?")[0]
+        heading = anchor.find_previous(string=_CATEGORY_HEADING)
+        if heading is None:
+            continue
+        ancestors = {id(parent) for parent in anchor.parents}
+        common = next((parent for parent in heading.parents if id(parent) in ancestors), None)
+        if common is None or common.select_one("div.game_cell") is not None:
+            continue
+        slug = anchor["href"].rsplit("/tag-", 1)[-1].split("?")[0].split("/")[0]
+        if slug:
             categories.setdefault(slug, heading.strip())
-    return links, categories
+    return categories
 
 
 def parse_card(html: str, url: str, crawled_at: datetime, systems: list[dict] | None = None) -> ParsedCard:
@@ -481,11 +506,8 @@ def parse_card(html: str, url: str, crawled_at: datetime, systems: list[dict] | 
             href = anchor.get("href") or ""
             tags.append(href.rsplit("/tag-", 1)[-1].split("?")[0] if "/tag-" in href else anchor.get_text(strip=True))
 
-    rating_avg = ratings_count = None
-    match = _RATING.search(text("rating") or soup.get_text(" ", strip=True))
-    if match:
-        rating_avg = float(match.group(1))
-        ratings_count = int(match.group(2).replace(",", "")) if match.group(2) else None
+    product = json_ld_product(soup)
+    rating_avg, ratings_count = _rating(product, text("rating") or soup.get_text(" ", strip=True))
 
     published_year = None
     for label in ("published", "release date", "released"):
@@ -500,14 +522,17 @@ def parse_card(html: str, url: str, crawled_at: datetime, systems: list[dict] | 
     session = (text("average session") or "").strip().lower()
     duration_hours = SESSION_HOURS.get(session)
 
-    corpus = " ".join(filter(None, [title, synopsis, _description_text(soup)]))
+    description = _description_text(soup)
+    corpus = " ".join(filter(None, [title, synopsis, description]))
     levels = _levels(corpus)
     players = _players(corpus)
     if levels:
         derived += ["level_min", "level_max"]
     if players:
         derived += ["players_min", "players_max"]
-    system = _system(corpus + " " + " ".join(tags), systems or [])
+    # дефіси й підкреслення тегів — як пробіли: тег «5th-edition» збігається з псевдонімом «5th edition»
+    tag_words = " ".join(re.sub(r"[-_]+", " ", tag) for tag in tags)
+    system = _system(" ".join(filter(None, [title, synopsis, tag_words])), systems or [], description)
     if system:
         derived += ["system", "edition", "required_books"]
 
@@ -538,7 +563,7 @@ def parse_card(html: str, url: str, crawled_at: datetime, systems: list[dict] | 
         "system": system.get("system") if system else None,
         "edition": system.get("edition") if system else None,
         "required_books": list(system.get("core_books") or []) if system else [],
-        "price": _price(soup),
+        "price": _price(soup, product),
         "rating_avg": rating_avg,
         "ratings_count": ratings_count,
         "author_ids": [DocumentKind.AUTHOR.natural_id(profile) for _, profile in authors],
@@ -551,23 +576,44 @@ def parse_card(html: str, url: str, crawled_at: datetime, systems: list[dict] | 
 
 
 def parse_profile(html: str) -> str | None:
-    """Біографія автора: текстовий блок сторінки профілю або її опис."""
-    soup = _soup(html)
-    block = soup.select_one("div.user_profile, div.profile_content, div.formatted_description")
-    if block is not None and block.get_text(strip=True):
-        return block.get_text(" ", strip=True)
-    tag = soup.find("meta", attrs={"property": "og:description"}) or soup.find("meta", attrs={"name": "description"})
-    return tag.get("content") if tag and tag.get("content") else None
+    """Біографія автора — власний текст профілю itch.io (блок user_profile).
+
+    Решта вмісту профілю (profile_content) — це посилання автора на сайти й
+    соцмережі та перелік його робіт із цінами, тож до біографії не входить.
+    Профіль без блоку user_profile біографії не має."""
+    block = _soup(html).select_one("div.user_profile")
+    text = block.get_text(" ", strip=True) if block is not None else ""
+    return text or None
+
+
+#: Шаблонні тексти itch.io на сторінці тегу. Рядок пошуку: «Explore physical games tagged X
+#: on itch.io.» … «· Upload your physical games to itch.io to have them show up here.»;
+#: meta description: «Find physical games tagged X like <перші роботи> on itch.io, the indie
+#: game hosting marketplace». Вони є на кожній сторінці тегу, тож описом не вважаються
+_TAG_BOILERPLATE = (
+    re.compile(r"^\s*Find\s+.+?\s+tagged\s+.+?\s+on\s+itch\.io,\s+the\s+indie\s+game\s+hosting\s+marketplace\s*\.?\s*$",
+               re.I | re.S),
+    re.compile(r"^\s*Explore\s+.+?\s+tagged\s+.+?\s+on\s+itch\.io\s*\.?", re.I | re.S),
+    re.compile(r"[\s·]*Upload\s+your\s+.+?\s+to\s+itch\.io\s+to\s+have\s+them\s+show\s+up\s+here\s*\.?\s*$", re.I | re.S),
+)
 
 
 def parse_tag_page(html: str) -> str | None:
-    """Опис тегу зі сторінки тегу."""
-    soup = _soup(html)
-    block = soup.select_one("div.tag_description, div.browse_description")
-    if block is not None and block.get_text(strip=True):
-        return block.get_text(" ", strip=True)
-    tag = soup.find("meta", attrs={"name": "description"}) or soup.find("meta", attrs={"property": "og:description"})
-    return tag.get("content") if tag and tag.get("content") else None
+    """Опис тегу — власний текст itch.io у блоці tag_description бічного
+    фільтра. Такий опис є лише в частини тегів; рядок пошуку на сторінці
+    повторює його обрізаним, а meta description — шаблон із переліком робіт,
+    тож тег без блоку tag_description опису не має."""
+    block = _soup(html).select_one("div.tag_description")
+    return strip_tag_boilerplate(block.get_text(" ", strip=True)) if block is not None else None
+
+
+def strip_tag_boilerplate(text: str | None) -> str | None:
+    """Опис тегу без шаблонних речень itch.io або None."""
+    text = text or ""
+    for pattern in _TAG_BOILERPLATE:
+        text = pattern.sub("", text, count=1)
+    text = text.strip(" ·\t\n")
+    return text or None
 
 
 def _profile_url(href: str) -> str:
@@ -605,19 +651,78 @@ def _players(text: str) -> tuple[int, int] | None:
     return None
 
 
-def _system(text: str, systems: list[dict]) -> dict | None:
-    """Ігрова система за назвами й псевдонімами зі списку вручну (systems.json)."""
-    lowered = f" {text.lower()} "
-    for system in systems:
-        names = [system.get("system", ""), *(system.get("aliases") or [])]
-        for name in names:
-            if name and re.search(r"(?<![\w])" + re.escape(name.lower()) + r"(?![\w])", lowered):
-                return system
+def _system(primary: str, systems: list[dict], secondary: str = "") -> dict | None:
+    """Ігрова система за назвами й псевдонімами зі списку вручну (systems.json).
+
+    Спершу шукається в назві, синопсисі й тегах (primary), і лише якщо там
+    системи немає — в описі картки (secondary): опис часто перелічує сумісні
+    системи й конверсії. Порядок списку — пріоритет: окремі системи (Shadowdark,
+    DCC, OSE, Pathfinder) стоять перед D&D 5e, яку модулі згадують для
+    сумісності, а «System-agnostic» — останньою. Назва системи, спільна для
+    кількох редакцій («Dungeons & Dragons»), редакції не визначає, тож для
+    таких записів рахуються лише псевдоніми."""
+    shared = {name for name, count in Counter(s.get("system") for s in systems).items() if count > 1}
+    for text in (primary, secondary):
+        lowered = f" {(text or '').lower()} "
+        for system in systems:
+            own = system.get("system", "")
+            names = [own if own not in shared else "", *(system.get("aliases") or [])]
+            for name in names:
+                if name and re.search(r"(?<![\w])" + re.escape(name.lower()) + r"(?![\w])", lowered):
+                    return system
     return None
 
 
-def _price(soup: Any) -> float | None:
-    """Ціна в доларах; без ціни (безкоштовна, «Name your own price») — None."""
+def json_ld_product(soup: Any) -> dict | None:
+    """Блок schema.org Product у JSON-LD картки: itch.io кладе туди назву,
+    середню оцінку з кількістю оцінок і, для платних модулів, ціну з валютою."""
+    for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        try:
+            data = json.loads(script.string or script.get_text() or "")
+        except ValueError:
+            continue
+        for item in data if isinstance(data, list) else [data]:
+            if isinstance(item, dict) and item.get("@type") == "Product":
+                return item
+    return None
+
+
+def _rating(product: dict | None, row_text: str) -> tuple[float | None, int | None]:
+    """Середня оцінка й кількість оцінок: спершу aggregateRating із JSON-LD,
+    інакше текст рядка Rating («Rated 4.8 out of 5 stars (25 total ratings)»)."""
+    aggregate = (product or {}).get("aggregateRating")
+    if isinstance(aggregate, dict):
+        try:
+            value = float(aggregate.get("ratingValue"))
+        except (TypeError, ValueError):
+            value = None
+        if value is not None:
+            try:
+                count = int(str(aggregate.get("ratingCount")).replace(",", ""))
+            except ValueError:
+                count = None
+            return value, count
+    match = _RATING.search(row_text or "")
+    if match is None:
+        return None, None
+    return float(match.group(1)), int(match.group(2).replace(",", "")) if match.group(2) else None
+
+
+def _price(soup: Any, product: dict | None = None) -> float | None:
+    """Ціна в доларах; без ціни (безкоштовна, «Name your own price») — None.
+    Спершу offers із JSON-LD (є лише в платних модулів), потім розмітка кнопки купівлі."""
+    offers = (product or {}).get("offers")
+    if isinstance(offers, list):
+        offers = offers[0] if offers else None
+    if isinstance(offers, dict) and offers.get("price") not in (None, ""):
+        try:
+            amount = float(str(offers["price"]).replace(",", "."))
+        except ValueError:
+            amount = None
+        if amount is not None:
+            rate = CURRENCY_TO_USD.get(str(offers.get("priceCurrency") or "USD").upper())
+            if rate is not None:
+                return round(amount * rate, 2) if amount > 0 else None
     for selector in ("span[itemprop=price]", ".price_value", ".buy_row .dollars", ".buy_message"):
         element = soup.select_one(selector)
         if element is None:

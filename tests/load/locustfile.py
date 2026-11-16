@@ -277,7 +277,7 @@ if RATES:
 
     class RateOperator(HttpUser):
         """Оператор панелі: цільова швидкість генерації сходинками LOAD_RATES
-        (кожна — LOAD_RATE_SECONDS), як повзунок на вкладці «Моніторинг»."""
+        (кожна — LOAD_RATE_SECONDS), як повзунок у розділі «Кузня» (моніторинг)."""
 
         fixed_count = 1
         wait_time = constant(1)

@@ -212,10 +212,6 @@ def write_monsters(srd: Srd, path: Path, play_counts: Counter | None = None) -> 
 COVERAGE_FIELDS = (
     "actions", "special_abilities", "subtype", "desc", "legendary_actions", "reactions",
 )
-REPORTED_COVERAGE = {"actions": "99%", "special_abilities": "83%", "subtype": "22%", "desc": "13% (lore)",
-                     "legendary_actions": "9%", "reactions": "3%"}
-REPORTED_DICTIONARIES = {"Alignments": "9", "Races": "9", "Subraces": "4", "Classes": "12", "Languages": "16",
-                         "Damage-Types": "13", "Conditions": "15", "Skills": "18"}
 
 
 def measure(srd: Srd, m: Measurements) -> None:
@@ -223,21 +219,21 @@ def measure(srd: Srd, m: Measurements) -> None:
     m.section(key, "Крок 1. 5e SRD (підрозділ 2.4)")
     total = len(srd.monsters)
     m.add(key, "табл. 2.1", "монстри / закляття / магічні предмети",
-          f"{number(total)} / {number(len(srd.spells))} / {number(len(srd.magic_items))}", "334 / 319 / 362")
-    m.add(key, "п. 2.9", "записів у повному проході", number(total + len(srd.spells) + len(srd.magic_items)), "1 015")
+          f"{number(total)} / {number(len(srd.spells))} / {number(len(srd.magic_items))}")
+    m.add(key, "п. 2.9", "записів у повному проході", number(total + len(srd.spells) + len(srd.magic_items)))
     m.add(key, "п. 2.4", "монстрів у src/2024/en того самого коміту",
-          number(len(srd.monsters_2024)) if srd.monsters_2024 else "файл недоступний", "3")
+          number(len(srd.monsters_2024)) if srd.monsters_2024 else "файл недоступний")
     for name in COVERAGE_FIELDS:
         filled = sum(1 for record in srd.monsters if record.get(name))
-        m.add(key, "табл. 2.6", f"покриття {name}", share(filled, total), REPORTED_COVERAGE[name])
+        m.add(key, "табл. 2.6", f"покриття {name}", share(filled, total))
     # порожній перелік чи рядок (немає стійкостей, мов) — значення, а не пропуск
     others = sorted({k for record in srd.monsters for k in record} - set(COVERAGE_FIELDS) - {"forms"})
     present = {k: sum(1 for r in srd.monsters if r.get(k) is not None) for k in others}
     incomplete = [f"{k} {percent(n, total)}" for k, n in present.items() if n < total]
     m.add(key, "п. 2.4.1", "решта полів, заповнених не в усіх записах",
-          ", ".join(incomplete) or "немає — 100%", "немає (100%)")
+          ", ".join(incomplete) or "немає — 100%")
     m.add(key, "п. 2.8.1", "поле environment у SRD",
-          f"{number(sum(1 for r in srd.monsters if 'environment' in r))} з {number(total)}", "0 із 334")
+          f"{number(sum(1 for r in srd.monsters if 'environment' in r))} з {number(total)}")
 
     # пастки формату (таблиця 2.7)
     multi_ac = sum(1 for r in srd.monsters if len(r.get("armor_class") or []) > 1)
@@ -258,8 +254,7 @@ def measure(srd: Srd, m: Measurements) -> None:
 
     # службові словники (п. 2.4.3)
     sizes = ", ".join(f"{d} ({number(len(srd.dictionaries.get(d, [])))})" for d in DICTIONARIES)
-    m.add(key, "п. 2.4.3", "службові словники", sizes,
-          ", ".join(f"{d} ({v})" for d, v in REPORTED_DICTIONARIES.items()))
+    m.add(key, "п. 2.4.3", "службові словники", sizes)
     canonical = srd.names("Alignments")
     aligned = Counter(r.get("alignment") for r in srd.monsters)
     valid = sum(count for value, count in aligned.items() if name_key(value) in canonical)
