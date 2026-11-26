@@ -17,11 +17,12 @@ from app.application.queries import (
     GetCharacterCardHandler,
     GetLiveStatsHandler,
     GetMonsterCardHandler,
+    GetNicheAnalyticsHandler,
     GetPlayStatisticsHandler,
     GetRecommendationsHandler,
 )
 
-QUERY_GROUPS = range(1, 11)
+QUERY_GROUPS = range(1, 12)
 
 HANDLERS = {
     ports.SearchUseCase: CachedSearchHandler,
@@ -31,6 +32,7 @@ HANDLERS = {
     ports.GetAuthorCardUseCase: GetAuthorCardHandler,
     ports.GetRecommendationsUseCase: GetRecommendationsHandler,
     ports.GetPlayStatisticsUseCase: GetPlayStatisticsHandler,
+    ports.GetNicheAnalyticsUseCase: GetNicheAnalyticsHandler,
     ports.GetLiveStatsUseCase: GetLiveStatsHandler,
     ports.IngestDocumentUseCase: IngestDocumentHandler,
     ports.ConfigureRateUseCase: ConfigureRateHandler,

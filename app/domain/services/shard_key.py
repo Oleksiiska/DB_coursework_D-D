@@ -6,7 +6,7 @@ import hashlib
 import uuid
 from typing import Iterable
 
-from app.domain.values import ShardKey
+from app.domain.values import ShardKey, ZoneBounds
 
 
 class ShardKeyService:
@@ -83,6 +83,11 @@ class ShardKeyService:
             upper = None if i == self.shard_count - 1 else f"{lows[i + 1]:04d}"
             bounds.append((lower, upper))
         return bounds
+
+    def zones(self) -> list[ZoneBounds]:
+        """Зони як об'єкти-значення: номер, межі й підпис діапазону кошиків —
+        для запитів, що збирають результат з усіх шардів (п. 4.12)."""
+        return [ZoneBounds(index, lower, upper) for index, (lower, upper) in enumerate(self.zone_bounds())]
 
     def distribution(self, entity_ids: Iterable[str]) -> dict[int, int]:
         """Фактичний розподіл — для перевірки рівномірності в тестах

@@ -1,0 +1,34 @@
+# Порівняльний замір швидкості запису на один і кілька шардів (п. 6.4):
+# колекція пригод з тим самим ключем і шляхом запису на 1, 2 і 3 шардах
+# кластера docker-compose.cluster.yml. Файл доповнює кластер, тож запускається
+# разом із ним (кластер піднімається сам, якщо ще не запущений):
+#
+#   docker compose -f docker-compose.cluster.yml -f docker-compose.bench.yml run --rm shard-bench [параметри]
+#
+# Те саме — скрипт scripts/shard-bench. Код заміру (tools/) до образу не входить
+# (таблиця 4.6) і монтується лише для читання; звіт — logs/shard-bench/*.md і
+# *.json. Колекції заміру лежать в окремій базі dnd_bench і після заміру видаляються.
+services:
+  shard-bench:
+    build: .
+    image: dnd-adventures-app:0.1
+    # На Linux, якщо ваш UID не 1000: APP_UID=$(id -u) APP_GID=$(id -g) (скрипти задають самі)
+    user: "${APP_UID:-1000}:${APP_GID:-1000}"
+    entrypoint: ["python", "-m", "tools.shard_bench"]
+    networks: [backend]
+    environment:
+      MONGO_URI: mongodb://mongos:27017
+      MONGO_DATABASE: dnd
+      CSV_DIR: /app/csv
+      LOG_DIR: /app/logs
+      LOG_LEVEL: ${LOG_LEVEL:-}
+    volumes:
+      - ./tools:/app/tools:ro
+      - ./logs:/app/logs
+      - ./config:/app/config:ro
+      - ${CSV_HOST_DIR:-./data/csv}:/app/csv:ro
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+      mongos:
+        condition: service_healthy

@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import dataclass, field, fields
+from datetime import datetime
 from enum import Enum
 from typing import Any, Protocol, runtime_checkable
 
@@ -387,6 +388,226 @@ class ShardKey:
 
     value: str
     shard_index: int
+
+
+@dataclass(frozen=True, slots=True)
+class ZoneBounds:
+    """Зона — діапазон значень shard_key [lower, upper), закріплений за одним
+    шардом (п. 4.3). Кошики shard_key — логічні партиції колекції пригод, зона
+    об'єднує суміжні кошики одного шарда; None на краях — MinKey і MaxKey.
+    """
+
+    index: int
+    lower: str | None
+    upper: str | None
+
+    @property
+    def label(self) -> str:
+        """Перший і останній кошик зони: «0000–0341»."""
+        first = self.lower or "0000"
+        last = "1023" if self.upper is None else f"{int(self.upper) - 1:04d}"
+        return f"{first}–{last}"
+
+
+# --------------------------------------------------------------------------
+# Аналітика ніш каталогу (група запитів 11, п. 4.12)
+# --------------------------------------------------------------------------
+
+
+class CatalogDimension(str, Enum):
+    """За чим групуються пригоди в аналітиці ніш."""
+
+    TAG = "tag"
+    SYSTEM = "system"
+    SETTING = "setting"
+    TIER = "tier"
+    YEAR = "year"
+
+
+class CatalogScope(str, Enum):
+    """Частина каталогу, за якою рахується аналітика: увесь каталог, модулі
+    itch.io (підготовлені CSV і краулер) або згенеровані пригоди."""
+
+    ALL = "all"
+    COLLECTED = "collected"
+    GENERATED = "generated"
+
+    @property
+    def origins(self) -> tuple[str, ...] | None:
+        """Значення provenance.origin частини; None — без обмеження."""
+        if self is CatalogScope.COLLECTED:
+            return (SourceOrigin.CSV.value, SourceOrigin.CRAWLER.value)
+        if self is CatalogScope.GENERATED:
+            return (SourceOrigin.GENERATED.value,)
+        return None
+
+
+class NicheOrder(str, Enum):
+    """Порядок ніш у звіті: за насиченістю (кількістю пригод) або за оцінкою."""
+
+    COUNT = "count"
+    RATING = "rating"
+
+
+#: Рівні гри (tiers of play) D&D 5e: межі рівнів персонажів кожного з чотирьох
+PLAY_TIERS: tuple[tuple[int, int], ...] = ((1, 4), (5, 10), (11, 16), (17, 20))
+
+
+def play_tier(level: int | None) -> int | None:
+    """Рівень гри за мінімальним рівнем персонажів пригоди: 1–4 → 1, 5–10 → 2,
+    11–16 → 3, 17–20 → 4; невідомий рівень — None."""
+    if level is None:
+        return None
+    for tier, (_, highest) in enumerate(PLAY_TIERS, start=1):
+        if level <= highest:
+            return tier
+    return len(PLAY_TIERS)
+
+
+#: Кошики гістограми оцінок по 0,5 бала на шкалі 0–5 itch.io
+RATING_BINS = 10
+
+
+@dataclass(frozen=True, slots=True)
+class NicheStats:
+    """Агрегат ніші — моноїд: `combine` асоціативне й комутативне, одиниця —
+    порожній агрегат. Тому часткові агрегати зон зводяться в будь-якому
+    порядку й групуванні, а результат не залежить від того, котрий шард
+    відповів першим (етап reduce, п. 4.12).
+
+    Усі поля розкладні: кількості й суми додаються (дистрибутивні показники),
+    середні обчислюються зі зведених сум і кількостей (алгебраїчні), мінімум
+    і максимум року теж дистрибутивні. Медіана — холістичний показник, її не
+    скласти з медіан зон, тож агрегат несе гістограму оцінок `rating_bins`.
+    """
+
+    adventures: int = 0
+    #: Пригоди з каталогу itch.io (origin csv або crawler)
+    collected: int = 0
+    rated: int = 0
+    rating_sum: float = 0.0
+    rating_bins: tuple[int, ...] = (0,) * RATING_BINS
+    ratings_total: int = 0
+    reviews_total: int = 0
+    free: int = 0
+    #: Платні пригоди (ціна понад 0 у доларах) і сума їхніх цін
+    priced: int = 0
+    price_sum: float = 0.0
+    #: Пригоди з відомою тривалістю й сума тривалостей у годинах
+    timed: int = 0
+    duration_sum: float = 0.0
+    year_min: int | None = None
+    year_max: int | None = None
+
+    def combine(self, other: NicheStats) -> NicheStats:
+        return NicheStats(
+            adventures=self.adventures + other.adventures,
+            collected=self.collected + other.collected,
+            rated=self.rated + other.rated,
+            rating_sum=self.rating_sum + other.rating_sum,
+            rating_bins=tuple(a + b for a, b in zip(self.rating_bins, other.rating_bins)),
+            ratings_total=self.ratings_total + other.ratings_total,
+            reviews_total=self.reviews_total + other.reviews_total,
+            free=self.free + other.free,
+            priced=self.priced + other.priced,
+            price_sum=self.price_sum + other.price_sum,
+            timed=self.timed + other.timed,
+            duration_sum=self.duration_sum + other.duration_sum,
+            year_min=_least(self.year_min, other.year_min, min),
+            year_max=_least(self.year_max, other.year_max, max),
+        )
+
+    @property
+    def avg_rating(self) -> float | None:
+        return self.rating_sum / self.rated if self.rated else None
+
+    @property
+    def free_share(self) -> float | None:
+        return self.free / self.adventures if self.adventures else None
+
+    @property
+    def avg_price(self) -> float | None:
+        """Середня ціна платних пригод у доларах."""
+        return self.price_sum / self.priced if self.priced else None
+
+    @property
+    def avg_duration(self) -> float | None:
+        return self.duration_sum / self.timed if self.timed else None
+
+    @property
+    def collected_share(self) -> float | None:
+        return self.collected / self.adventures if self.adventures else None
+
+    def median_rating(self) -> float | None:
+        """Оцінка медіани за гістограмою з лінійною інтерполяцією всередині
+        кошика; похибка не більша за ширину кошика (0,5 бала)."""
+        if not self.rated:
+            return None
+        width = 5 / RATING_BINS
+        half = self.rated / 2
+        seen = 0
+        for index, count in enumerate(self.rating_bins):
+            if count and seen + count >= half:
+                return round(index * width + (half - seen) / count * width, 2)
+            seen += count
+        return 5.0
+
+
+def _least(a: int | None, b: int | None, pick) -> int | None:
+    """Мінімум або максимум, у якому невідоме значення не бере участі."""
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return pick(a, b)
+
+
+@dataclass(frozen=True, slots=True)
+class ReadSnapshot:
+    """Момент у часі кластера, на якому читаються всі зони одного запиту.
+
+    Часткові результати шардів узгоджені між собою, навіть коли генератор
+    безперервно пише нові пригоди (читання snapshot). `token` — непрозоре для
+    домену значення сховища, `at` — відповідний час для показу.
+    """
+
+    token: str
+    at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ZonePartial:
+    """Результат етапу map для однієї зони: агрегати груп, обчислені на шарді
+    зони, — назад передаються лише вони, а не документи.
+
+    `groups` — агрегат за ключем групи (порожній рядок — значення не вказано),
+    `documents` — скільки пригод зони потрапило в запит, `shard` — шард, на
+    який маршрутизатор надіслав запит (за планом explain).
+    """
+
+    zone: ZoneBounds
+    groups: dict[str, NicheStats] = field(default_factory=dict)
+    documents: int = 0
+    shard: str | None = None
+    elapsed_ms: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class MergedAggregate:
+    """Той самий запит, виконаний сховищем як одна розподілена агрегація.
+
+    Маршрутизатор сам ділить конвеєр на частину, що виконується на кожному
+    шарді (`shards_part`), і частину злиття (`merger_part`); `merge_type` —
+    де відбувається злиття. Результат слугує звіркою для явного map-reduce.
+    """
+
+    groups: dict[str, NicheStats] = field(default_factory=dict)
+    documents: int = 0
+    elapsed_ms: int = 0
+    shards: tuple[str, ...] = ()
+    shards_part: tuple[str, ...] = ()
+    merger_part: tuple[str, ...] = ()
+    merge_type: str | None = None
 
 
 @dataclass(slots=True)

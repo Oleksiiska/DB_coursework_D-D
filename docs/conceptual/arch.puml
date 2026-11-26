@@ -1,7 +1,8 @@
 ' ============================================================
 '  Архітектура застосунку: Layered + Hexagonal + CQRS
 '  Концептуальні схеми розділу 3 (станом на 24.09.2026):
-'  рисунки 3.1–3.4, 3.11, 3.12;
+'  рисунки 3.1–3.4, 3.11, 3.12; рисунок 3.2 — станом на 24.11.2026
+'  (вхідний порт аналітики ніш, група запитів 11);
 '  фінальна схема взаємодії елементів (п. 3.11) — станом на 10.10.2026.
 '  Схеми модулів і класів (рисунки 3.5–3.10) будуються з коду:
 '    python tools/arch_diagrams.py --out docs/diagrams --plantuml plantuml.jar
@@ -83,19 +84,19 @@ skinparam ranksep 40
 left to right direction
 
 package "Ведучі адаптери (driving)" #F8F4EC {
-  component "REST-контролери\n<size:10>Search, Card,</size>\n<size:10>Statistics, Admin</size>" as D1
+  component "REST-контролери\n<size:10>Search, Card, Statistics,</size>\n<size:10>Analytics, Admin</size>" as D1
   component "Потік статистики\n<size:10>StatsStream</size>" as D2
   component "Процес запису\n<size:10>IngestWorker</size>" as D3
 }
 
-package "Вхідні порти — 10" #FFF8E7 {
+package "Вхідні порти — 11" #FFF8E7 {
   component "SearchUseCase\n<size:10>шаблон і три нащадки:</size>\n<size:10>пригоди, монстри, зустрічі</size>" as P1
-  component "GetAdventureCard\nGetMonsterCard\nGetCharacterCard\nGetAuthorCard\nGetRecommendations\nGetPlayStatistics\nGetLiveStats" as P2
+  component "GetAdventureCard\nGetMonsterCard\nGetCharacterCard\nGetAuthorCard\nGetRecommendations\nGetPlayStatistics\nGetLiveStats\nGetNicheAnalytics" as P2
   component "IngestDocument\nConfigureRate" as P3
 }
 
 package "ЯДРО" #EDF4F2 {
-  component "Сценарії використання\n<size:10>12 обробників</size>" as CORE
+  component "Сценарії використання\n<size:10>13 обробників</size>" as CORE
   component "Сутності\nта значення" as ENT
   component "Доменні служби\n<size:10>нормалізація, валідація,</size>\n<size:10>ключ розподілу, класифікація</size>" as SRV
 }

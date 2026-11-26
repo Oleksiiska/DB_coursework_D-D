@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from app.application.dto import LiveStatsDTO, RateSettingDTO, SearchResultDTO
+from app.application.dto import LiveStatsDTO, NicheReportDTO, RateSettingDTO, SearchResultDTO
 from app.domain.errors import EntityNotFound, ValidationError
 from app.infrastructure.config import Container, Settings
 from app.infrastructure.observability import LoggingConfigurator
@@ -102,6 +102,13 @@ class _Live:
         return LiveStatsDTO(generated_at=datetime.now(timezone.utc))
 
 
+class _Niches:
+    async def handle(self, query):
+        query.validate()
+        return NicheReportDTO(dimension=query.dimension, scope=query.scope, order=query.order, limit=query.limit,
+                              generated_at=datetime.now(timezone.utc))
+
+
 @pytest.fixture
 def client():
     from fastapi import FastAPI
@@ -114,7 +121,8 @@ def client():
     registry.bind(SimpleNamespace(
         search_adventures=_Search(), search_monsters=_Search(), search_encounters=_Search(),
         adventure_card=missing, monster_card=missing, character_card=missing, author_card=missing,
-        recommendations=missing, play_statistics=missing, live_stats=_Live(), configure_rate=_Rate(),
+        recommendations=missing, play_statistics=missing, niche_analytics=_Niches(), live_stats=_Live(),
+        configure_rate=_Rate(),
     ))
     app = FastAPI()
     registry.register(app, data_dir=PROJECT / "app" / "data")
@@ -125,7 +133,8 @@ def test_routes_of_table_4_15(client) -> None:
     paths = {route.path for route in client.app.routes}
     for path in ("/api/search/{kind}", "/api/adventures/{adventure_id}", "/api/monsters/{monster_id}",
                  "/api/characters/{character_id}", "/api/authors/{author_id}", "/api/adventures/{adventure_id}/similar",
-                 "/api/adventures/{adventure_id}/chain", "/api/statistics/{report}", "/api/stats/stream", "/api/rate", "/"):
+                 "/api/adventures/{adventure_id}/chain", "/api/statistics/{report}", "/api/analytics/niches",
+                 "/api/stats/stream", "/api/rate", "/"):
         assert path in paths, path
 
 
@@ -137,6 +146,10 @@ def test_search_and_error_translation(client) -> None:
     assert client.post("/api/rate", json={"documents_per_second": 9000}).status_code == 422
     assert client.post("/api/rate", json={"documents_per_second": 2000}).json()["documents_per_second"] == 2000
     assert client.get("/api/rate").json()["documents_per_second"] == 100
+    report = client.get("/api/analytics/niches", params={"dimension": "system", "order": "rating", "limit": 5}).json()
+    assert (report["dimension"], report["order"], report["limit"]) == ("system", "rating", 5)
+    assert client.get("/api/analytics/niches", params={"dimension": "planet"}).status_code == 422
+    assert client.get("/api/analytics/niches", params={"limit": 0}).status_code == 422
 
 
 def test_static_page_and_manual_lists(client) -> None:

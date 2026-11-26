@@ -7,6 +7,7 @@ from app.application.queries.get_cards import (
     GetMonsterCardHandler,
 )
 from app.application.queries.get_live_stats import GetLiveStatsHandler
+from app.application.queries.niche_analytics import GetNicheAnalyticsHandler
 from app.application.queries.play_statistics import GetPlayStatisticsHandler
 from app.application.queries.recommendations import GetRecommendationsHandler
 from app.application.queries.search import (
@@ -23,6 +24,7 @@ __all__ = [
     "GetCharacterCardHandler",
     "GetLiveStatsHandler",
     "GetMonsterCardHandler",
+    "GetNicheAnalyticsHandler",
     "GetPlayStatisticsHandler",
     "GetRecommendationsHandler",
     "SearchAdventuresHandler",

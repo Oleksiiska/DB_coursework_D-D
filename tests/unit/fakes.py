@@ -11,14 +11,21 @@ import time
 from typing import AsyncIterator, Generic, Sequence, TypeVar
 
 from app.domain.entities import Adventure, SearchLogEntry
+from app.domain.services import NicheAggregator, ShardKeyService
 from app.domain.values import (
+    CatalogDimension,
+    CatalogScope,
     DocumentKind,
+    MergedAggregate,
     QueuedBatch,
+    ReadSnapshot,
     SearchHits,
     SearchSpecification,
     SortOrder,
     SourceBatch,
     SourceStats,
+    ZoneBounds,
+    ZonePartial,
 )
 
 T = TypeVar("T")
@@ -67,10 +74,48 @@ class InMemoryRepository(Generic[T]):
 
 
 class InMemoryAdventureRepository(InMemoryRepository[Adventure]):
-    """Задовольняє контракт `AdventureRepository`."""
+    """Задовольняє контракт `AdventureRepository`.
 
-    def __init__(self, items: list[Adventure] | None = None) -> None:
+    Аналітику ніш рахує еталонна доменна служба: зона — діапазон shard_key,
+    шард зони — «shard<номер>». `failing_zones` імітує недоступні шарди.
+    """
+
+    def __init__(self, items: list[Adventure] | None = None, failing_zones: set[int] | None = None,
+                 snapshot: str | None = "1732464000.1") -> None:
         super().__init__("adventure_id", items)
+        self.failing_zones = set(failing_zones or ())
+        self.snapshot_token = snapshot
+        self.niche_calls: list[tuple] = []
+        self._keys = ShardKeyService()
+        self._aggregator = NicheAggregator()
+
+    async def read_snapshot(self, zone: ZoneBounds | None = None) -> ReadSnapshot | None:
+        if self.snapshot_token is None or (zone is not None and zone.index in self.failing_zones):
+            return None
+        return ReadSnapshot(token=self.snapshot_token)
+
+    def _in_zone(self, adventure: Adventure, zone: ZoneBounds) -> bool:
+        key = adventure.shard_key or self._keys.key_value(adventure.adventure_id)
+        return (zone.lower is None or key >= zone.lower) and (zone.upper is None or key < zone.upper)
+
+    async def niche_partial(self, zone: ZoneBounds, dimension: CatalogDimension, scope: CatalogScope,
+                            snapshot: ReadSnapshot | None = None) -> ZonePartial:
+        self.niche_calls.append(("partial", zone.index, dimension, scope, snapshot))
+        if zone.index in self.failing_zones:
+            raise ConnectionError(f"adventures: зона {zone.index + 1} ({zone.label}): shard unreachable (код 133)")
+        groups, documents = self._aggregator.map(
+            (a for a in self._items.values() if self._in_zone(a, zone)), dimension, scope)
+        return ZonePartial(zone=zone, groups=groups, documents=documents, shard=f"shard{zone.index + 1}", elapsed_ms=5)
+
+    async def niche_merged(self, dimension: CatalogDimension, scope: CatalogScope,
+                           snapshot: ReadSnapshot | None = None) -> MergedAggregate:
+        self.niche_calls.append(("merged", dimension, scope, snapshot))
+        if self.failing_zones:
+            raise ConnectionError("adventures: вбудована агрегація: shard unreachable (код 133)")
+        groups, documents = self._aggregator.map(self._items.values(), dimension, scope)
+        return MergedAggregate(groups=groups, documents=documents, elapsed_ms=7,
+                               shards=("shard1", "shard2", "shard3"), shards_part=("$project", "$group"),
+                               merger_part=("$mergeCursors", "$group"), merge_type="mongos")
 
     async def find_by_author(self, author_id: str, limit: int = 50) -> list[Adventure]:
         return [a for a in self._items.values() if author_id in a.author_ids][:limit]

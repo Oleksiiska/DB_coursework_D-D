@@ -1,5 +1,6 @@
 from app.presentation.rest.controllers import (
     AdminController,
+    AnalyticsController,
     CardController,
     ErrorTranslator,
     SearchController,
@@ -9,6 +10,7 @@ from app.presentation.rest.routes import RouteRegistry
 
 __all__ = [
     "AdminController",
+    "AnalyticsController",
     "CardController",
     "ErrorTranslator",
     "RouteRegistry",

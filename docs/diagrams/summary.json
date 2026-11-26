@@ -1,31 +1,31 @@
 {
-  "modules": 55,
+  "modules": 57,
   "groups": 23,
-  "classes": 142,
+  "classes": 160,
   "classes_by_kind": {
     "adapter": 24,
     "config": 4,
-    "controller": 9,
-    "dto": 16,
+    "controller": 10,
+    "dto": 22,
     "entity": 15,
-    "enum": 6,
+    "enum": 9,
     "error": 6,
-    "handler": 13,
-    "inbound": 10,
+    "handler": 14,
+    "inbound": 11,
     "outbound": 13,
     "process": 6,
-    "service": 5,
+    "service": 6,
     "spec": 1,
-    "value": 14
+    "value": 19
   },
   "relations_by_kind": {
     "association": 7,
-    "composition": 27,
-    "dependency": 67,
+    "composition": 36,
+    "dependency": 72,
     "generalization": 16,
-    "realization": 28,
+    "realization": 29,
     "reference": 11,
-    "use": 100
+    "use": 131
   },
   "realizations": [
     "AdventureFilters ..|> SearchSpecification",
@@ -41,6 +41,7 @@
     "GetCharacterCardHandler ..|> GetCharacterCardUseCase",
     "GetLiveStatsHandler ..|> GetLiveStatsUseCase",
     "GetMonsterCardHandler ..|> GetMonsterCardUseCase",
+    "GetNicheAnalyticsHandler ..|> GetNicheAnalyticsUseCase",
     "GetPlayStatisticsHandler ..|> GetPlayStatisticsUseCase",
     "GetRecommendationsHandler ..|> GetRecommendationsUseCase",
     "GraphAdapter ..|> GraphRepository",
@@ -57,5 +58,5 @@
     "RedisMetricsAdapter ..|> MetricsSink",
     "SearchIndexAdapter ..|> SearchIndex"
   ],
-  "date": "21.10.2026"
+  "date": "24.11.2026"
 }

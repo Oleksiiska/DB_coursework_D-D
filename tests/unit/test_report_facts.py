@@ -251,3 +251,20 @@ def test_data_preparation_runs_in_the_application_image_without_entering_it() ->
     assert {"tools", "data", "scripts"} <= set(ignored)
     for script in ("prepare-data", "setup", "start", "load-csv", "stop"):
         assert (PROJECT / "scripts" / f"{script}.ps1").is_file() and (PROJECT / "scripts" / f"{script}.sh").is_file()
+
+
+def test_niche_analytics_of_section_4_12() -> None:
+    """Таблиця 1.2, група 11; п. 4.12; таблиця 4.9: аналітика ніш — розподілений
+    запит map-reduce, результат кешується на 5 хв, медіана — за гістограмою з
+    кроком 0,5 бала, ненадійна оцінка — менше ніж 5 оцінених пригод, рівні гри D&D 5e."""
+    from app.application.ports import GetNicheAnalyticsUseCase
+    from app.application.queries import GetNicheAnalyticsHandler
+    from app.domain.services import NicheAggregator
+    from app.domain.values import PLAY_TIERS, RATING_BINS, CatalogDimension
+
+    assert QUERY_GROUP_COVERAGE[11] == (GetNicheAnalyticsUseCase,) and max(QUERY_GROUP_COVERAGE) == 11
+    assert GetNicheAnalyticsHandler.CACHE_TTL_SECONDS == 300
+    assert GetNicheAnalyticsHandler.CACHE_PREFIX == "analytics:niches:v1"
+    assert (RATING_BINS, NicheAggregator.MIN_RATED) == (10, 5)
+    assert PLAY_TIERS == ((1, 4), (5, 10), (11, 16), (17, 20))
+    assert [d.value for d in CatalogDimension] == ["tag", "system", "setting", "tier", "year"]

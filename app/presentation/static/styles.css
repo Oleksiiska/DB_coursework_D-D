@@ -109,8 +109,8 @@ img { max-width: 100%; }
   position: relative; display: flex; flex-direction: column; align-items: center; padding: 8px 18px 10px;
   text-decoration: none; color: #d8c6ae; border-radius: 3px;
 }
-.nav a span { font: 21px/1.1 var(--display); letter-spacing: .03em; }
-.nav a small { font-size: 13px; color: var(--muted); }
+.nav a span { font: 21px/1.1 var(--display); letter-spacing: .03em; white-space: nowrap; }
+.nav a small { font-size: 13px; color: var(--muted); white-space: nowrap; }
 .nav a:hover { color: var(--gold-hi); background: rgba(255, 106, 26, .06); }
 .nav a.on { color: var(--gold); }
 .nav a.on::after {
@@ -493,6 +493,22 @@ td.q { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space:
 .qstats { display: flex; flex-wrap: wrap; gap: 8px 24px; margin-bottom: 10px; font-size: 15px; color: var(--muted); }
 .qstats b { color: #f2dfbe; font-weight: 500; }
 
+/* ------------------------------------------------------------ атлас ніш (map-reduce по шардах) */
+.mr { display: grid; gap: 14px; }
+.mr-note { margin: 0; color: #d8c6ae; max-width: none; }
+.mr-zones { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+.mr-zone { border-top: 3px solid var(--zone, var(--magma)); }
+.mr-zone .v { font-size: 28px; }
+.mr-zone.failed { border-color: var(--bad); opacity: .85; }
+.mr-zone.failed .v { color: #ff9b7d; }
+.mr-arrow { text-align: center; font-size: 14px; color: var(--muted); letter-spacing: .02em; }
+.mr-reduce { justify-self: center; min-width: min(100%, 460px); text-align: center; }
+.mr-times { margin: 0; justify-content: center; }
+.mr-check { font-size: 15px; color: #d8c6ae; line-height: 1.6; }
+.mr-check .badge { margin-right: 6px; }
+.atlas-chart { height: 420px; }
+.atlas-table td.q { max-width: 220px; }
+
 /* ------------------------------------------------------------ сторінки персонажа й автора */
 .profile-head { display: flex; flex-wrap: wrap; align-items: end; gap: 18px 30px; }
 .hp { display: grid; gap: 6px; min-width: 260px; }
@@ -503,6 +519,14 @@ td.q { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space:
 .timeline { display: flex; flex-wrap: wrap; gap: 8px; }
 
 /* ------------------------------------------------------------ адаптивність */
+/* шість розділів: вужчі відступи, а на середніх екранах навігація — окремим рядком */
+@media (max-width: 1340px) {
+  .nav a { padding: 8px 12px 10px; }
+}
+@media (max-width: 1220px) {
+  .top { grid-template-columns: auto 1fr; }
+  .nav { grid-column: 1 / -1; order: 3; justify-content: flex-start; overflow-x: auto; }
+}
 @media (max-width: 1020px) {
   .top { grid-template-columns: auto 1fr; }
   .nav { grid-column: 1 / -1; order: 3; justify-content: flex-start; overflow-x: auto; }

@@ -13,6 +13,7 @@ from typing import Any
 
 from app.application.dto import (
     CampaignQueryDTO,
+    NicheQueryDTO,
     PlayStatisticsQueryDTO,
     RateSettingDTO,
     SearchQueryDTO,
@@ -24,6 +25,7 @@ from app.application.ports import (
     GetAuthorCardUseCase,
     GetCharacterCardUseCase,
     GetMonsterCardUseCase,
+    GetNicheAnalyticsUseCase,
     GetPlayStatisticsUseCase,
     GetRecommendationsUseCase,
     SearchUseCase,
@@ -119,6 +121,24 @@ class StatisticsController:
             limit=int(params.get("limit") or 10),
         )
         return dto_to_dict(await self._play_statistics.handle(query))
+
+
+class AnalyticsController:
+    """`GET /api/analytics/niches` — аналітика ніш каталогу (група 11)."""
+
+    def __init__(self, niche_analytics: GetNicheAnalyticsUseCase) -> None:
+        self._niche_analytics = niche_analytics
+
+    async def niches(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Значення вимірів перевіряє сценарій (відповідь 422)."""
+        query = NicheQueryDTO(
+            dimension=str(params.get("dimension") or "tag"),
+            scope=str(params.get("scope") or "all"),
+            order=str(params.get("order") or "count"),
+            limit=int(params.get("limit") or 20),
+            refresh=bool(params.get("refresh")),
+        )
+        return dto_to_dict(await self._niche_analytics.handle(query))
 
 
 class AdminController:

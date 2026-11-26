@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import collections.abc
 import dataclasses
 import enum
@@ -15,15 +16,24 @@ import time
 import types
 import typing
 from abc import ABC, abstractmethod
-from datetime import date, datetime
-from typing import Any, Callable, Generic, Sequence, TypeVar
+from datetime import date, datetime, timezone
+from typing import Any, Awaitable, Callable, Generic, Sequence, TypeVar
 
 from app.domain.entities import Adventure, Encounter, Monster, PlayerCharacter
 from app.domain.values import (
+    PLAY_TIERS,
+    RATING_BINS,
     AdventureFilters,
+    CatalogDimension,
+    CatalogScope,
     EncounterFilters,
+    MergedAggregate,
     MonsterFilters,
+    NicheStats,
+    ReadSnapshot,
     SearchSpecification,
+    ZoneBounds,
+    ZonePartial,
 )
 
 T = TypeVar("T")
@@ -451,6 +461,308 @@ class MongoAdventureRepository(MongoCrudRepository[Adventure]):
             document["co_author_ids"] = sorted(document.get("co_author_ids") or [])
             result[author] = document
         return result
+
+    # --- аналітика ніш: етап map на шарді зони і звірка (п. 4.12) ---
+
+    #: Межа тривалості одного запиту аналітики; розмір першої порції відповіді —
+    #: усі групи зони вміщуються в неї, тож запит не потребує getMore
+    NICHE_MAX_TIME_MS = 120_000
+    NICHE_BATCH_SIZE = 10_000
+    #: Походження пригод каталогу itch.io (п. 2.1.2)
+    COLLECTED_ORIGINS = CatalogScope.COLLECTED.origins
+    #: Коди помилок, за яких проба знімка повторюється з іншою зоною, а не
+    #: вимикається: недоступний шард, мережа, вибори первинного вузла, ще не
+    #: створена колекція
+    TRANSIENT_CODES = frozenset({6, 7, 26, 89, 91, 133, 189, 202, 262, 9001, 10107, 11600, 11602, 13435, 13436})
+    #: Стан, що з'ясовується на першому запиті й далі не перевіряється: чи
+    #: підтримує сховище читання snapshot і підказку $natural в агрегації
+    _snapshot_unsupported = False
+    _natural_hint = True
+
+    async def read_snapshot(self, zone: ZoneBounds | None = None) -> ReadSnapshot | None:
+        """Проба читання з рівнем узгодженості snapshot у зоні `zone`: сховище
+        саме обирає момент atClusterTime і повертає його у відповіді курсора.
+        На одному вузлі без набору реплік таке читання не підтримується — це
+        запам'ятовується, і далі проба не виконується."""
+        from pymongo.errors import OperationFailure, PyMongoError
+
+        if self._snapshot_unsupported:
+            return None
+        probe = {self.SHARD_KEY_FIELD: (zone.lower if zone is not None and zone.lower else "0000"),
+                 "_id": "__snapshot_probe__"}
+        command = {"aggregate": self._collection, "pipeline": [{"$match": probe}, {"$limit": 1}],
+                   "cursor": {}, "readConcern": {"level": "snapshot"}}
+        try:
+            reply = await self._documents.database.command(command)
+        except OperationFailure as error:
+            if error.code not in self.TRANSIENT_CODES:
+                self._snapshot_unsupported = True
+                log.warning("%s: читання snapshot не підтримується (%s) — зони читаються без спільного знімка",
+                            self._collection, self._brief(error))
+            else:
+                log.warning("%s: проба знімка в зоні %s не вдалася: %s", self._collection,
+                            zone.label if zone else "—", self._brief(error))
+            return None
+        except PyMongoError as error:
+            log.warning("%s: проба знімка в зоні %s не вдалася: %s", self._collection,
+                        zone.label if zone else "—", self._brief(error))
+            return None
+        at = (reply.get("cursor") or {}).get("atClusterTime")
+        if at is None:
+            return None
+        return ReadSnapshot(token=f"{at.time}.{at.inc}", at=datetime.fromtimestamp(at.time, tz=timezone.utc))
+
+    async def niche_partial(
+        self,
+        zone: ZoneBounds,
+        dimension: CatalogDimension,
+        scope: CatalogScope,
+        snapshot: ReadSnapshot | None = None,
+    ) -> ZonePartial:
+        """Етап map: групування документів зони на її шарді.
+
+        Фільтр за діапазоном shard_key потрібен маршрутизатору: за ним запит
+        надсилається лише на шард зони. На самому шарді зона — це всі його
+        документи, тож запит переглядає колекцію в природному порядку, як і
+        вбудована агрегація, з якою його звіряють. Шард, що виконав запит, береться
+        з плану explain, — це й перевірка, що запит не розіслано на всі шарди.
+        """
+        from pymongo.errors import PyMongoError
+
+        pipeline = self.niche_pipeline(dimension, scope, zone)
+        try:
+            (documents, elapsed), plan = await asyncio.gather(
+                self._timed(self._niche_aggregate(pipeline, snapshot)), self._niche_plan(pipeline))
+        except PyMongoError as error:
+            raise ConnectionError(
+                f"{self._collection}: зона {zone.index + 1} ({zone.label}): {self._brief(error)}") from error
+        groups, total = self._niche_groups(documents)
+        shards = self._plan_shards(plan)
+        shard = ", ".join(shards) if shards else None
+        log.debug("%s.niche_partial зона %d (%s) → %s: %d док., %d груп — %d мс", self._collection,
+                  zone.index + 1, zone.label, shard or "?", total, len(groups), elapsed)
+        return ZonePartial(zone=zone, groups=groups, documents=total, shard=shard, elapsed_ms=elapsed)
+
+    async def niche_merged(
+        self,
+        dimension: CatalogDimension,
+        scope: CatalogScope,
+        snapshot: ReadSnapshot | None = None,
+    ) -> MergedAggregate:
+        """Той самий конвеєр без фільтра зони: маршрутизатор розсилає його на всі
+        шарди, а $group ділить на часткове групування на шардах і злиття."""
+        from pymongo.errors import PyMongoError
+
+        pipeline = self.niche_pipeline(dimension, scope)
+        try:
+            (documents, elapsed), plan = await asyncio.gather(
+                self._timed(self._niche_aggregate(pipeline, snapshot)), self._niche_plan(pipeline))
+        except PyMongoError as error:
+            raise ConnectionError(f"{self._collection}: вбудована агрегація: {self._brief(error)}") from error
+        groups, total = self._niche_groups(documents)
+        split = plan.get("splitPipeline") or {}
+        log.debug("%s.niche_merged: %d док., %d груп — %d мс; злиття: %s", self._collection, total, len(groups),
+                  elapsed, plan.get("mergeType") or "—")
+        return MergedAggregate(
+            groups=groups, documents=total, elapsed_ms=elapsed, shards=self._plan_shards(plan),
+            shards_part=self._stage_names(split.get("shardsPart")), merger_part=self._stage_names(split.get("mergerPart")),
+            merge_type=plan.get("mergeType"),
+        )
+
+    def niche_pipeline(
+        self, dimension: CatalogDimension, scope: CatalogScope, zone: ZoneBounds | None = None
+    ) -> list[dict[str, Any]]:
+        """Конвеєр етапу map — та сама обробка, що й еталон
+        NicheAggregator.group_keys / contribution, мовою агрегації.
+
+        1. $match — діапазон shard_key зони (маршрутизація) і частина каталогу.
+        2. $project — лише показники пригоди й ключ групи: повні тексти далі
+           конвеєром не йдуть.
+        3. Для тегів — $unwind без повторів тегу; рядок першого тегу (або
+           пригоди без тегів) позначається, тож кількість пригод зони рахується
+           в тому самому проході.
+        4. $group — часткові суми й кількості за ключем групи.
+        """
+        match: dict[str, Any] = {}
+        if zone is not None:
+            bounds = {op: value for op, value in (("$gte", zone.lower), ("$lt", zone.upper)) if value is not None}
+            if bounds:
+                match[self.SHARD_KEY_FIELD] = bounds
+        if scope.origins is not None:
+            match["provenance.origin"] = {"$in": list(scope.origins)}
+        pipeline: list[dict[str, Any]] = [{"$match": match}] if match else []
+        project = self._niche_metrics()
+        if dimension is CatalogDimension.TAG:
+            project["key"] = {"$setUnion": [{"$ifNull": ["$tags", []]}, []]}
+            pipeline += [
+                {"$project": project},
+                {"$unwind": {"path": "$key", "preserveNullAndEmptyArrays": True, "includeArrayIndex": "position"}},
+            ]
+            first: Any = {"$cond": [{"$gt": ["$position", 0]}, 0, 1]}
+        else:
+            project["key"] = self._niche_key(dimension)
+            pipeline.append({"$project": project})
+            first = 1
+        group: dict[str, Any] = {
+            "_id": "$key",
+            "adventures": {"$sum": 1},
+            "documents": {"$sum": first},
+            "collected": {"$sum": "$collected"},
+            "rated": {"$sum": "$rated"},
+            "rating_sum": {"$sum": "$rating"},
+            **{f"bin{i}": {"$sum": {"$cond": [{"$eq": ["$bin", i]}, 1, 0]}} for i in range(RATING_BINS)},
+            "ratings_total": {"$sum": "$ratings"},
+            "reviews_total": {"$sum": "$reviews"},
+            "free": {"$sum": "$free"},
+            "priced": {"$sum": "$priced"},
+            "price_sum": {"$sum": "$price"},
+            "timed": {"$sum": "$timed"},
+            "duration_sum": {"$sum": "$duration"},
+            "year_min": {"$min": "$year"},
+            "year_max": {"$max": "$year"},
+        }
+        pipeline.append({"$group": group})
+        return pipeline
+
+    @classmethod
+    def _niche_metrics(cls) -> dict[str, Any]:
+        """Показники однієї пригоди — відповідник NicheAggregator.contribution."""
+        rated = {"$isNumber": "$rating_avg"}
+        priced = {"$and": [{"$isNumber": "$price.amount"}, {"$gt": ["$price.amount", 0]}]}
+        timed = {"$isNumber": "$duration_hours"}
+        factor = RATING_BINS / 5
+        return {
+            "_id": 0,
+            "collected": {"$cond": [{"$in": ["$provenance.origin", list(cls.COLLECTED_ORIGINS)]}, 1, 0]},
+            "rated": {"$cond": [rated, 1, 0]},
+            "rating": {"$cond": [rated, "$rating_avg", 0]},
+            "bin": {"$cond": [rated, {"$min": [RATING_BINS - 1, {"$max": [0, {"$floor": {
+                "$multiply": ["$rating_avg", factor]}}]}]}, -1]},
+            "ratings": {"$cond": [{"$isNumber": "$ratings_count"}, "$ratings_count", 0]},
+            "reviews": {"$cond": [{"$isArray": "$reviews"}, {"$size": "$reviews"}, 0]},
+            "free": {"$cond": [{"$isNumber": "$price.amount"}, {"$cond": [{"$eq": ["$price.amount", 0]}, 1, 0]}, 1]},
+            "priced": {"$cond": [priced, 1, 0]},
+            "price": {"$cond": [priced, "$price.amount", 0]},
+            "timed": {"$cond": [timed, 1, 0]},
+            "duration": {"$cond": [timed, "$duration_hours", 0]},
+            "year": "$published_year",
+        }
+
+    @staticmethod
+    def _niche_key(dimension: CatalogDimension) -> Any:
+        """Ключ групи для вимірів з одним значенням на пригоду; рівень гри —
+        за мінімальним рівнем персонажів (play_tier)."""
+        if dimension is CatalogDimension.SYSTEM:
+            return "$system"
+        if dimension is CatalogDimension.SETTING:
+            return "$setting_id"
+        if dimension is CatalogDimension.YEAR:
+            return "$published_year"
+        level = "$levels.minimum"
+        branches = [{"case": {"$lte": [level, highest]}, "then": tier}
+                    for tier, (_, highest) in enumerate(PLAY_TIERS, start=1)]
+        return {"$cond": [{"$isNumber": level}, {"$switch": {"branches": branches, "default": len(PLAY_TIERS)}}, None]}
+
+    async def _niche_aggregate(self, pipeline: list[dict[str, Any]], snapshot: ReadSnapshot | None) -> list[dict]:
+        """Виконання конвеєра; зі знімком — на моменті atClusterTime, спільному
+        для всіх зон запиту. Підказка $natural — перегляд колекції в природному
+        порядку: зона займає шард цілком, тож обхід індексу shard_key з читанням
+        кожного документа за ним лише повільніший. Якщо сховище підказку
+        відхилить, запит повторюється без неї."""
+        from bson.timestamp import Timestamp
+        from pymongo.errors import OperationFailure
+
+        command: dict[str, Any] = {
+            "aggregate": self._collection, "pipeline": pipeline,
+            "cursor": {"batchSize": self.NICHE_BATCH_SIZE}, "maxTimeMS": self.NICHE_MAX_TIME_MS,
+        }
+        if snapshot is not None:
+            seconds, increment = (int(part) for part in snapshot.token.split("."))
+            command["readConcern"] = {"level": "snapshot", "atClusterTime": Timestamp(seconds, increment)}
+        if self._natural_hint:
+            try:
+                cursor = await self._documents.database.cursor_command({**command, "hint": {"$natural": 1}})
+                return await cursor.to_list()
+            except OperationFailure as error:
+                if "hint" not in str(error).lower():
+                    raise
+                self._natural_hint = False
+                log.warning("%s: підказку $natural відхилено (%s) — запити аналітики без неї",
+                            self._collection, self._brief(error))
+        cursor = await self._documents.database.cursor_command(command)
+        return await cursor.to_list()
+
+    async def _niche_plan(self, pipeline: list[dict[str, Any]]) -> dict:
+        """План запиту без виконання (queryPlanner): на які шарди його надіслано
+        і як маршрутизатор поділив конвеєр. Діагностика не зупиняє запит."""
+        from pymongo.errors import PyMongoError
+
+        request: dict[str, Any] = {"aggregate": self._collection, "pipeline": pipeline, "cursor": {}}
+        if self._natural_hint:
+            request["hint"] = {"$natural": 1}
+        try:
+            return await self._documents.database.command({"explain": request, "verbosity": "queryPlanner"})
+        except PyMongoError as error:
+            log.debug("%s: explain недоступний: %s", self._collection, self._brief(error))
+            return {}
+
+    @staticmethod
+    async def _timed(operation: Awaitable[Any]) -> tuple[Any, int]:
+        started = time.perf_counter()
+        result = await operation
+        return result, round((time.perf_counter() - started) * 1000)
+
+    @staticmethod
+    def _niche_groups(documents: Sequence[dict]) -> tuple[dict[str, NicheStats], int]:
+        """Відповідь $group → агрегати за текстовим ключем групи і кількість
+        пригод, що потрапили в запит."""
+        groups: dict[str, NicheStats] = {}
+        total = 0
+        for document in documents:
+            key = document.get("_id")
+            if isinstance(key, float) and key.is_integer():
+                key = int(key)
+            text = "" if key is None else str(key)
+            stats = NicheStats(
+                adventures=int(document["adventures"]),
+                collected=int(document["collected"]),
+                rated=int(document["rated"]),
+                rating_sum=float(document["rating_sum"]),
+                rating_bins=tuple(int(document[f"bin{i}"]) for i in range(RATING_BINS)),
+                ratings_total=int(document["ratings_total"]),
+                reviews_total=int(document["reviews_total"]),
+                free=int(document["free"]),
+                priced=int(document["priced"]),
+                price_sum=float(document["price_sum"]),
+                timed=int(document["timed"]),
+                duration_sum=float(document["duration_sum"]),
+                year_min=None if document.get("year_min") is None else int(document["year_min"]),
+                year_max=None if document.get("year_max") is None else int(document["year_max"]),
+            )
+            groups[text] = stats if text not in groups else groups[text].combine(stats)
+            total += int(document["documents"])
+        return groups, total
+
+    @staticmethod
+    def _plan_shards(plan: dict) -> tuple[str, ...]:
+        """Шарди з плану explain агрегації; на одному вузлі — порожньо."""
+        shards = plan.get("shards")
+        if isinstance(shards, dict):
+            return tuple(sorted(shards))
+        winning = (plan.get("queryPlanner") or {}).get("winningPlan") or {}
+        return tuple(sorted(s["shardName"] for s in winning.get("shards") or [] if s.get("shardName")))
+
+    @staticmethod
+    def _stage_names(stages: Sequence[dict] | None) -> tuple[str, ...]:
+        return tuple(next(iter(stage)) for stage in stages or () if isinstance(stage, dict) and stage)
+
+    @staticmethod
+    def _brief(error: Exception) -> str:
+        """Стисле повідомлення про збій: код і перший рядок причини."""
+        code = getattr(error, "code", None)
+        details = getattr(error, "details", None) or {}
+        message = str(details.get("errmsg") or error).splitlines()[0][:200]
+        return f"{message} (код {code})" if code is not None else message
 
 
 class MongoMonsterRepository(MongoCrudRepository[Monster]):

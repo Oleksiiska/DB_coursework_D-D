@@ -1,0 +1,77 @@
+' ============================================================
+'  Рисунок 4.4. Виконання запиту аналітики ніш (map-reduce по шардах)
+'  Розподілений запит групи 11, п. 4.12 звіту (станом на 24.11.2026).
+'  Рендеринг: java -jar plantuml.jar -tpng -charset UTF-8 niche-map-reduce.puml
+' ============================================================
+
+@startuml niche-map-reduce
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam dpi 150
+skinparam defaultFontSize 13
+skinparam ParticipantPadding 4
+skinparam BoxPadding 2
+skinparam maxMessageSize 230
+hide footbox
+
+participant "GetNicheAnalytics\nHandler" as H
+participant "Niche\nAggregator" as A
+participant "CacheStore" as K
+participant "Adventure\nRepository" as R
+participant "mongos" as M
+box "Шарди: зона = діапазон shard_key" #FAF7F2
+participant "shard1\n<size:11>0000–0341</size>" as S1
+participant "shard2\n<size:11>0342–0682</size>" as S2
+participant "shard3\n<size:11>0683–1023</size>" as S3
+end box
+
+[-> H : handle(NicheQueryDTO)\n<size:11>від AnalyticsController</size>
+H -> K : get(ключ кешу)
+alt влучання в кеш
+  K --> H : зведений прогін
+else промах або refresh
+  K --> H : порожньо
+  H -> R : read_snapshot(зона 1)
+  R -> M : проба, snapshot
+  M -> S1
+  M --> R : atClusterTime
+  R --> H : знімок
+  par map: запит на зону, паралельно
+    H -> R : niche_partial(зона 1, знімок)
+    R -> M : $match зони → $project\n→ $unwind → $group
+    M -> S1 : лише шард зони
+    S1 --> R : часткові агрегати
+    R --> H : ZonePartial
+    H -> A : merge_into
+  else
+    H -> R : niche_partial(зона 2, знімок)
+    R -> M : той самий конвеєр,\nзона 2
+    M -> S2 : лише шард зони
+    S2 --> R : часткові агрегати
+    R --> H : ZonePartial
+    H -> A : merge_into
+  else
+    H -> R : niche_partial(зона 3, знімок)
+    R -> M : той самий конвеєр,\nзона 3
+    M -> S3 : лише шард зони
+    S3 --> R : часткові агрегати
+    R --> H : ZonePartial
+    H -> A : merge_into
+  end
+  H -> R : niche_merged(знімок)
+  R -> M : конвеєр без діапазону
+  M -> S1 : $group на шардах
+  M -> S2
+  M -> S3
+  M --> R : злиття груп
+  R --> H : MergedAggregate, explain
+  H -> A : equal — звірка
+  opt усі зони відповіли
+    H -> K : set(ключ, прогін, 300 с)
+  end
+end
+H -> A : rank(порядок, ліміт)
+A --> H : верхні ніші\nпісля зведення
+[<-- H : NicheReportDTO
+
+@enduml

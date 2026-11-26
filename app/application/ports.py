@@ -21,6 +21,8 @@ from app.application.dto import (
     IngestReport,
     LiveStatsDTO,
     MonsterCardDTO,
+    NicheQueryDTO,
+    NicheReportDTO,
     PlayStatisticsDTO,
     PlayStatisticsQueryDTO,
     RateSettingDTO,
@@ -104,6 +106,16 @@ class GetPlayStatisticsUseCase(Protocol):
 
 
 @runtime_checkable
+class GetNicheAnalyticsUseCase(Protocol):
+    """Аналітика ніш каталогу (група 11): показники пригод за тегом, системою,
+    світом, рівнем гри чи роком по всій шардованій колекції — часткові
+    агрегати шардів і їх зведення (map-reduce, п. 4.12)."""
+
+    async def handle(self, query: NicheQueryDTO) -> NicheReportDTO:
+        ...
+
+
+@runtime_checkable
 class GetLiveStatsUseCase(Protocol):
     """Стан системи для панелі моніторингу (група 10)."""
 
@@ -146,6 +158,7 @@ QUERY_GROUP_COVERAGE: dict[int, tuple[type, ...]] = {
     8: (GetRecommendationsUseCase, GetMonsterCardUseCase),
     9: (SearchUseCase,),
     10: (GetLiveStatsUseCase,),
+    11: (GetNicheAnalyticsUseCase,),
 }
 
 
@@ -156,6 +169,7 @@ __all__ = [
     "GetCharacterCardUseCase",
     "GetLiveStatsUseCase",
     "GetMonsterCardUseCase",
+    "GetNicheAnalyticsUseCase",
     "GetPlayStatisticsUseCase",
     "GetRecommendationsUseCase",
     "IngestDocumentUseCase",

@@ -25,6 +25,7 @@ from app.application.queries import (
     GetCharacterCardHandler,
     GetLiveStatsHandler,
     GetMonsterCardHandler,
+    GetNicheAnalyticsHandler,
     GetPlayStatisticsHandler,
     GetRecommendationsHandler,
     SearchAdventuresHandler,
@@ -49,6 +50,7 @@ from app.domain.ports import (
 from app.domain.services import (
     DocumentValidator,
     EnvironmentClassifier,
+    NicheAggregator,
     QueryNormalizer,
     ShardKeyService,
     VocabularyNormalizer,
@@ -193,6 +195,7 @@ class UseCases:
     author_card: GetAuthorCardHandler
     recommendations: GetRecommendationsHandler
     play_statistics: GetPlayStatisticsHandler
+    niche_analytics: GetNicheAnalyticsHandler
     live_stats: GetLiveStatsHandler
     ingest: IngestDocumentHandler
     configure_rate: ConfigureRateHandler
@@ -437,6 +440,8 @@ class Container:
             recommendations=GetRecommendationsHandler(adapters.graph, adapters.adventures, adapters.cache),
             play_statistics=GetPlayStatisticsHandler(
                 adapters.monsters, adapters.characters, adapters.encounters, adapters.cache),
+            niche_analytics=GetNicheAnalyticsHandler(
+                adapters.adventures, s["shard_keys"], s["niche_aggregator"], adapters.cache),
             live_stats=GetLiveStatsHandler(
                 adapters.metrics, adapters.cache, adapters.publisher, adapters.adventures,
                 queue_limit=self._settings.queue_limit, default_rate=self._settings.default_rate),
@@ -576,6 +581,7 @@ class Container:
         return {
             "normalizer": QueryNormalizer(),
             "shard_keys": ShardKeyService(self._settings.shard_count),
+            "niche_aggregator": NicheAggregator(),
             "classifier": EnvironmentClassifier(),
             "validator": DocumentValidator(),
             "vocabulary": VocabularyNormalizer(self._tag_aliases()),

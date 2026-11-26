@@ -17,8 +17,12 @@ from typing import Any, ClassVar, Generic, TypeVar
 from app.domain.errors import ValidationError
 from app.domain.values import (
     AdventureFilters,
+    CatalogDimension,
+    CatalogScope,
     EncounterFilters,
     MonsterFilters,
+    NicheOrder,
+    NicheStats,
     Page,
     SearchSpecification,
     Snippet,
@@ -137,6 +141,35 @@ class CampaignQueryDTO:
             reasons.append("рівні: 1 ≤ level_from ≤ level_to ≤ 20")
         if reasons:
             raise ValidationError("campaign", reasons)
+
+
+@dataclass(frozen=True, slots=True)
+class NicheQueryDTO:
+    """Запит аналітики ніш каталогу (група запитів 11).
+
+    `dimension` — за чим групуються пригоди: tag, system, setting, tier
+    (рівень гри) або year; `scope` — увесь каталог (all), модулі itch.io
+    (collected) чи згенеровані (generated); `order` і `limit` — порядок і
+    кількість ніш у звіті; `refresh` — перерахувати, не беручи результат з кешу.
+    """
+
+    dimension: str = CatalogDimension.TAG.value
+    scope: str = CatalogScope.ALL.value
+    order: str = NicheOrder.COUNT.value
+    limit: int = 20
+    refresh: bool = False
+
+    MAX_LIMIT: ClassVar[int] = 100
+
+    def validate(self) -> None:
+        reasons: list[str] = []
+        for name, values in (("dimension", CatalogDimension), ("scope", CatalogScope), ("order", NicheOrder)):
+            if getattr(self, name) not in {v.value for v in values}:
+                reasons.append(f"{name}: невідоме значення {getattr(self, name)!r}")
+        if not 1 <= self.limit <= self.MAX_LIMIT:
+            reasons.append(f"limit: від 1 до {self.MAX_LIMIT}")
+        if reasons:
+            raise ValidationError("analytics", reasons)
 
 
 @dataclass(frozen=True, slots=True)
@@ -451,6 +484,140 @@ class PlayStatisticsDTO:
 
 
 @dataclass(slots=True)
+class ZoneRunDTO:
+    """Етап map однієї зони: шард, що виконав запит, скільки пригод і груп
+    він повернув, час виконання на шарді або причина недоступності."""
+
+    index: int
+    label: str
+    shard: str | None = None
+    documents: int = 0
+    groups: int = 0
+    elapsed_ms: int = 0
+    error: str | None = None
+
+
+@dataclass(slots=True)
+class MergedRunDTO:
+    """Звірка з вбудованою розподіленою агрегацією сховища: час, збіг
+    результату з явним map-reduce і поділ конвеєра маршрутизатором."""
+
+    elapsed_ms: int | None = None
+    documents: int = 0
+    groups: int = 0
+    #: Чи збігся результат із зведеним; None — порівняння неможливе (зону не прочитано)
+    matches: bool | None = None
+    shards: list[str] = field(default_factory=list)
+    shards_part: list[str] = field(default_factory=list)
+    merger_part: list[str] = field(default_factory=list)
+    merge_type: str | None = None
+    error: str | None = None
+
+
+@dataclass(slots=True)
+class NicheRowDTO:
+    """Рядок звіту аналітики ніш: показники групи після зведення зон."""
+
+    key: str
+    adventures: int
+    #: Частка пригод запиту, що належать ніші; для тегів частки не додаються до 1
+    share: float | None = None
+    collected_share: float | None = None
+    rated: int = 0
+    avg_rating: float | None = None
+    median_rating: float | None = None
+    ratings_total: int = 0
+    reviews_total: int = 0
+    free_share: float | None = None
+    avg_price: float | None = None
+    avg_duration: float | None = None
+    year_min: int | None = None
+    year_max: int | None = None
+    #: Скільки пригод ніші дала кожна зона — внесок шардів
+    by_zone: list[int] = field(default_factory=list)
+
+    @classmethod
+    def from_stats(cls, key: str, stats: NicheStats, documents: int, by_zone: list[int]) -> "NicheRowDTO":
+        return cls(
+            key=key,
+            adventures=stats.adventures,
+            share=_rounded(stats.adventures / documents if documents else None, 4),
+            collected_share=_rounded(stats.collected_share, 4),
+            rated=stats.rated,
+            avg_rating=_rounded(stats.avg_rating),
+            median_rating=stats.median_rating(),
+            ratings_total=stats.ratings_total,
+            reviews_total=stats.reviews_total,
+            free_share=_rounded(stats.free_share, 4),
+            avg_price=_rounded(stats.avg_price),
+            avg_duration=_rounded(stats.avg_duration, 1),
+            year_min=stats.year_min,
+            year_max=stats.year_max,
+            by_zone=list(by_zone),
+        )
+
+
+@dataclass(slots=True)
+class NicheRunDTO:
+    """Обчислений запит аналітики ніш до впорядкування: усі групи після
+    reduce, внесок зон і параметри виконання.
+
+    Кешується саме він, тож зміна порядку чи кількості ніш у звіті не запускає
+    обчислення повторно.
+    """
+
+    dimension: str
+    scope: str
+    generated_at: datetime
+    snapshot: str | None = None
+    snapshot_at: datetime | None = None
+    zones: list[ZoneRunDTO] = field(default_factory=list)
+    documents: int = 0
+    groups: dict[str, NicheStats] = field(default_factory=dict)
+    by_zone: dict[str, list[int]] = field(default_factory=dict)
+    #: Найдовший і сумарний час етапу map на шардах: паралельне виконання проти послідовного
+    map_max_ms: int = 0
+    map_sum_ms: int = 0
+    #: Час зведення часткових результатів у застосунку
+    reduce_ms: float = 0.0
+    #: Повний час збору: від розсилання зонам до останньої відповіді й зведення
+    gather_ms: int = 0
+    merged: MergedRunDTO = field(default_factory=MergedRunDTO)
+
+    @property
+    def complete(self) -> bool:
+        return all(zone.error is None for zone in self.zones)
+
+
+@dataclass(slots=True)
+class NicheReportDTO:
+    """Звіт аналітики ніш (група запитів 11, п. 4.12): верхні ніші за обраним
+    порядком і перебіг розподіленого обчислення — етап map кожної зони,
+    reduce у застосунку та звірка з вбудованою агрегацією сховища."""
+
+    dimension: str
+    scope: str
+    order: str
+    limit: int
+    generated_at: datetime
+    cache_hit: bool = False
+    #: Чи відповіли всі зони; частка зон, що відповіли
+    complete: bool = True
+    coverage: float = 1.0
+    snapshot: str | None = None
+    snapshot_at: datetime | None = None
+    documents: int = 0
+    groups_total: int = 0
+    zones: list[ZoneRunDTO] = field(default_factory=list)
+    map_max_ms: int = 0
+    map_sum_ms: int = 0
+    reduce_ms: float = 0.0
+    gather_ms: int = 0
+    merged: MergedRunDTO = field(default_factory=MergedRunDTO)
+    rows: list[NicheRowDTO] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class IngestReport:
     """Підсумок обробки пакета на шляху запису."""
 
@@ -570,6 +737,10 @@ def _restore(value: Any, hint: Any) -> Any:
     return value
 
 
+def _rounded(value: float | None, digits: int = 2) -> float | None:
+    return None if value is None else round(value, digits)
+
+
 def _parse_value(raw: Any, hint: Any) -> Any:
     """Значення параметра запиту → тип поля фільтра."""
     origin = typing.get_origin(hint)
@@ -604,7 +775,12 @@ __all__ = [
     "EncounterCardDTO",
     "IngestReport",
     "LiveStatsDTO",
+    "MergedRunDTO",
     "MonsterCardDTO",
+    "NicheQueryDTO",
+    "NicheReportDTO",
+    "NicheRowDTO",
+    "NicheRunDTO",
     "PlayStatisticsDTO",
     "PlayStatisticsQueryDTO",
     "QueryLogItemDTO",
@@ -614,6 +790,7 @@ __all__ = [
     "SEARCH_FILTERS",
     "SearchQueryDTO",
     "SearchResultDTO",
+    "ZoneRunDTO",
     "dto_from_dict",
     "dto_to_dict",
 ]

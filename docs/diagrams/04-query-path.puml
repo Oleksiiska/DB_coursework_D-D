@@ -11,10 +11,11 @@ skinparam HeaderFontSize 10
 hide empty members
 
 header
-станом на 21.10.2026 · побудовано з вихідного коду
+станом на 24.11.2026 · побудовано з вихідного коду
 endheader
 
 left to right direction
+class AnalyticsController <<контролер>> #F1E0C0
 class CardController <<контролер>> #F1E0C0
 class SearchController <<контролер>> #F1E0C0
 class StatisticsController <<контролер>> #F1E0C0
@@ -24,6 +25,7 @@ interface GetAuthorCardUseCase <<вхідний порт>> #E2D8F3
 interface GetCharacterCardUseCase <<вхідний порт>> #E2D8F3
 interface GetLiveStatsUseCase <<вхідний порт>> #E2D8F3
 interface GetMonsterCardUseCase <<вхідний порт>> #E2D8F3
+interface GetNicheAnalyticsUseCase <<вхідний порт>> #E2D8F3
 interface GetPlayStatisticsUseCase <<вхідний порт>> #E2D8F3
 interface GetRecommendationsUseCase <<вхідний порт>> #E2D8F3
 interface SearchUseCase <<вхідний порт>> #E2D8F3
@@ -33,6 +35,7 @@ class GetAuthorCardHandler <<обробник>> #E2D8F3
 class GetCharacterCardHandler <<обробник>> #E2D8F3
 class GetLiveStatsHandler <<обробник>> #E2D8F3
 class GetMonsterCardHandler <<обробник>> #E2D8F3
+class GetNicheAnalyticsHandler <<обробник>> #E2D8F3
 class GetPlayStatisticsHandler <<обробник>> #E2D8F3
 class GetRecommendationsHandler <<обробник>> #E2D8F3
 class SearchAdventuresHandler <<обробник>> #E2D8F3
@@ -48,18 +51,22 @@ interface GraphRepository <<вихідний порт>> #D2EADF
 interface MetricsSink <<вихідний порт>> #D2EADF
 interface MonsterRepository <<вихідний порт>> #D2EADF
 interface SearchIndex <<вихідний порт>> #D2EADF
+class NicheAggregator <<служба>> #D2EADF
 class QueryNormalizer <<служба>> #D2EADF
+class ShardKeyService <<служба>> #D2EADF
 SearchUseCase <|.. CachedSearchHandler
 GetAdventureCardUseCase <|.. GetAdventureCardHandler
 GetAuthorCardUseCase <|.. GetAuthorCardHandler
 GetCharacterCardUseCase <|.. GetCharacterCardHandler
 GetLiveStatsUseCase <|.. GetLiveStatsHandler
 GetMonsterCardUseCase <|.. GetMonsterCardHandler
+GetNicheAnalyticsUseCase <|.. GetNicheAnalyticsHandler
 GetPlayStatisticsUseCase <|.. GetPlayStatisticsHandler
 GetRecommendationsUseCase <|.. GetRecommendationsHandler
 CachedSearchHandler <|-- SearchAdventuresHandler
 CachedSearchHandler <|-- SearchEncountersHandler
 CachedSearchHandler <|-- SearchMonstersHandler
+AnalyticsController --> GetNicheAnalyticsUseCase
 CachedSearchHandler --> CacheStore
 CachedSearchHandler --> CrudRepository
 CachedSearchHandler --> MetricsSink
@@ -85,6 +92,10 @@ GetLiveStatsHandler --> MetricsSink
 GetMonsterCardHandler --> CacheStore
 GetMonsterCardHandler --> GraphRepository
 GetMonsterCardHandler --> MonsterRepository
+GetNicheAnalyticsHandler --> AdventureRepository
+GetNicheAnalyticsHandler --> CacheStore
+GetNicheAnalyticsHandler --> NicheAggregator
+GetNicheAnalyticsHandler --> ShardKeyService
 GetPlayStatisticsHandler --> CacheStore
 GetPlayStatisticsHandler --> CharacterRepository
 GetPlayStatisticsHandler --> EncounterRepository

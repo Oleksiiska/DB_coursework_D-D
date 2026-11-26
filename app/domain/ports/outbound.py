@@ -11,12 +11,18 @@ from typing import AsyncIterator, Protocol, Sequence, TypeVar, runtime_checkable
 
 from app.domain.entities import Adventure, Encounter, Monster, PlayerCharacter, SearchLogEntry
 from app.domain.values import (
+    CatalogDimension,
+    CatalogScope,
+    MergedAggregate,
     Page,
     QueuedBatch,
+    ReadSnapshot,
     SearchHits,
     SearchSpecification,
     SortOrder,
     SourceBatch,
+    ZoneBounds,
+    ZonePartial,
 )
 
 T = TypeVar("T")
@@ -86,6 +92,37 @@ class AdventureRepository(CrudRepository[Adventure], Protocol):
         Значення перераховуються, а не накопичуються, тож повторна доставка
         пакета їх не спотворює.
         """
+        ...
+
+    async def read_snapshot(self, zone: ZoneBounds | None = None) -> ReadSnapshot | None:
+        """Момент у часі кластера для узгодженого читання кількох зон (читання
+        snapshot); проба читає зону `zone`. None — сховище такого читання не
+        підтримує (один вузол без набору реплік) або шард зони недоступний."""
+        ...
+
+    async def niche_partial(
+        self,
+        zone: ZoneBounds,
+        dimension: CatalogDimension,
+        scope: CatalogScope,
+        snapshot: ReadSnapshot | None = None,
+    ) -> ZonePartial:
+        """Етап map аналітики ніш для однієї зони (група запитів 11, п. 4.12).
+
+        Запит обмежено діапазоном shard_key зони, тож маршрутизатор надсилає
+        його на один шард. Шард групує свої документи й повертає лише часткові
+        агрегати груп. Збій сховища — ConnectionError: зону позначає сценарій.
+        """
+        ...
+
+    async def niche_merged(
+        self,
+        dimension: CatalogDimension,
+        scope: CatalogScope,
+        snapshot: ReadSnapshot | None = None,
+    ) -> MergedAggregate:
+        """Той самий запит однією агрегацією через маршрутизатор, який сам ділить
+        конвеєр між шардами й злиттям, — для звірки результату й часу."""
         ...
 
 

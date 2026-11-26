@@ -1,7 +1,8 @@
 // Веб-застосунок D&D Adventures (п. 4.9). Розділи: «Пригоди» (пошук і добірки,
 // групи запитів 1–3, 9), сторінки пригоди, монстра, автора й персонажа (групи 4–6, 8),
 // «Бестіарій», «Хроніки» (наратив реальних боїв), «Зала слави» (статистика гри,
-// група 7) і «Кузня» — моніторинг (таблиця 4.16). Дані — REST-маршрути таблиці 4.15
+// група 7), «Атлас» (аналітика ніш map-reduce по шардах, група 11) і «Кузня» —
+// моніторинг (таблиця 4.16). Дані — REST-маршрути таблиці 4.15
 // і потік SSE /api/stats/stream, що раз на секунду надсилає знімок стану системи.
 "use strict";
 
@@ -162,9 +163,9 @@ const backButton = '<button class="back" type="button" data-back><svg aria-hidde
 // ---------------------------------------------------------------- маршрутизація
 // Адреси розділів — у частині після «#», тож працюють кнопки «назад» і закладки:
 // #/?q=…&level=… — пошук пригод, #/adventure/<id>, #/bestiary?…, #/monster/<id>,
-// #/chronicles?…, #/character/<id>, #/author/<id>, #/halls, #/forge
+// #/chronicles?…, #/character/<id>, #/author/<id>, #/halls, #/atlas?…, #/forge
 const SECTION_OF = { "": "adventures", adventure: "adventures", author: "adventures", bestiary: "bestiary", monster: "bestiary",
-  chronicles: "chronicles", character: "chronicles", halls: "halls", forge: "forge" };
+  chronicles: "chronicles", character: "chronicles", halls: "halls", atlas: "atlas", forge: "forge" };
 const VIEWS = {};
 let current = { section: null, path: null };
 let lastPointer = null;
@@ -906,6 +907,177 @@ VIEWS.halls = {
     load();
   },
 };
+
+// ================================================================ АТЛАС (аналітика ніш, група запитів 11)
+// Звіт рахується по всій шардованій колекції пригод: кожен шард групує свою
+// зону ключів (map), застосунок зводить часткові результати (reduce), а
+// вбудована агрегація через mongos на тому самому знімку слугує звіркою.
+const DIMENSIONS = { tag: "теги", system: "системи", setting: "ігрові світи", tier: "рівні гри", year: "роки видання" };
+const SCOPES = { all: "увесь каталог", collected: "модулі itch.io", generated: "згенеровані пригоди" };
+const TIERS = { 1: "рівні 1–4", 2: "рівні 5–10", 3: "рівні 11–16", 4: "рівні 17–20" };
+const ZONE_COLORS = ["#ff6a1a", "#f2c35b", "#9db8ff", "#9ccf7f", "#e9a08f", "#c9a6ff"];
+const ATLAS_DEFAULTS = { dimension: "tag", scope: "all", order: "count", limit: "20" };
+const atlas = { chart: null, seq: 0 };
+
+function nicheName(dimension, key) {
+  if (key === "") return "не вказано";
+  if (dimension === "setting") return settingName(key) || key;
+  if (dimension === "tier") return TIERS[key] || key;
+  return key;
+}
+
+const ms = (n) => (n == null ? "—" : `${n < 10 ? fmt1(n) : fmt(n)} мс`);
+const stamp = (iso) => (iso ? new Date(iso).toLocaleString("uk-UA", { dateStyle: "short", timeStyle: "medium" }) : "—");
+
+VIEWS.atlas = {
+  title: () => "Атлас ніш",
+  html: (t) => {
+    const p = t.params;
+    const value = (name) => p.get(name) || ATLAS_DEFAULTS[name];
+    const select = (name, options) => `<select class="field" name="${name}">${Object.entries(options).map(([v, l]) =>
+      `<option value="${v}"${value(name) === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
+    return `
+      <div class="forge-head"><div><h1 class="gilded">Атлас ніш</h1>
+        <p class="lead">Скільки модулів має кожна тема, як їх оцінюють, скільки вони коштують і тривають — по всьому каталогу.
+          Кожен шард рахує свою зону ключів, а застосунок зводить часткові результати (map-reduce).</p></div></div>
+      <form class="slab filters" id="atlas-form" autocomplete="off">
+        <label class="lab">Групувати за${select("dimension", DIMENSIONS)}</label>
+        <label class="lab">Частина каталогу${select("scope", SCOPES)}</label>
+        <label class="lab">Порядок${select("order", { count: "за кількістю пригод", rating: "за середньою оцінкою" })}</label>
+        <label class="lab short">Ніш у звіті${select("limit", { 10: "10", 20: "20", 50: "50", 100: "100" })}</label>
+        <div class="go"><button class="rune" type="submit">Показати</button>
+          <button class="ghost" type="button" id="atlas-refresh" title="Обчислити заново, не беручи результат із кешу">Перерахувати</button></div>
+      </form>
+      <section class="slab section"><h2>Як зібрано звіт</h2><div id="atlas-run">${loading}</div></section>
+      <section class="slab section"><h2>Внесок шардів у верхні ніші</h2>
+        <div class="legend" id="atlas-legend"></div>
+        <div class="chartbox atlas-chart"><canvas id="atlas-chart" aria-label="Кількість пригод ніші за шардами"></canvas></div></section>
+      <section class="slab section"><h2>Ніші</h2>
+        <div class="table-scroll"><table class="atlas-table"><thead><tr><th class="num">№</th><th>Ніша</th><th class="num">Пригод</th>
+          <th class="num">Частка</th><th class="num">Оцінка</th><th class="num">Медіана ≈</th><th class="num">Оцінено</th>
+          <th class="num">Відгуків</th><th class="num">Безкоштовних</th><th class="num">Ціна</th><th class="num">Тривалість</th>
+          <th>Роки</th><th class="num">З itch.io</th></tr></thead><tbody id="atlas-rows"></tbody></table></div>
+        <p class="muted small">Частка — від пригод, що потрапили в запит; пригода з кількома тегами входить у кожну їхню нішу.
+          Середні оцінка, ціна (платних, у доларах) і тривалість — алгебраїчні показники: їх зведено точно із сум і кількостей шардів.
+          Медіана — холістичний показник, її оцінено за гістограмою оцінок із кроком 0,5 бала. У порядку за оцінкою ніші,
+          де оцінено менше ніж 5 пригод, ідуть після решти.</p></section>`;
+  },
+  after(main, t) {
+    const form = $("atlas-form");
+    const params = () => {
+      const query = new URLSearchParams();
+      for (const name of Object.keys(ATLAS_DEFAULTS)) query.set(name, form.elements[name].value);
+      return query;
+    };
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      FX.strike(form.querySelector(".rune"));
+      go(`#/atlas?${params()}`);
+    });
+    form.addEventListener("change", () => go(`#/atlas?${params()}`));
+    $("atlas-refresh").addEventListener("click", (e) => {
+      FX.strike(e.currentTarget);
+      loadAtlas(params(), true);
+    });
+    loadAtlas(params(), false);
+  },
+};
+
+async function loadAtlas(params, refresh) {
+  const seq = ++atlas.seq;
+  $("atlas-run").innerHTML = '<div class="muted">Шарди рахують свої зони…</div>';
+  if (refresh) params.set("refresh", "true");
+  try {
+    const report = await api(`/api/analytics/niches?${params}`);
+    if (seq !== atlas.seq || !$("atlas-run")) return;
+    renderAtlas(report);
+  } catch (error) {
+    if (seq === atlas.seq && $("atlas-run")) $("atlas-run").innerHTML = `<div class="error">Звіт не обчислено: ${esc(error.message)}</div>`;
+  }
+}
+
+function renderAtlas(r) {
+  const zones = r.zones || [];
+  const answered = zones.filter((z) => !z.error).length;
+  const speedup = r.map_max_ms ? r.map_sum_ms / r.map_max_ms : null;
+  const m = r.merged || {};
+  const stages = (list) => (list && list.length ? list.map(esc).join(" → ") : "—");
+  const verdict = m.matches == null ? '<span class="badge empty">не звірено</span>'
+    : m.matches ? '<span class="badge ok">збігається</span>' : '<span class="badge empty">не збігається</span>';
+  $("atlas-run").innerHTML = `
+    <div class="mr">
+      <p class="mr-note">${r.snapshot ? `Усі зони прочитано на одному знімку даних${r.snapshot_at ? ` — <b>${esc(stamp(r.snapshot_at))}</b>` : ""}
+        <span class="muted">(atClusterTime ${esc(r.snapshot)})</span>: нові пригоди, записані під час підрахунку, не потрапляють у жодну зону.`
+        : "Сховище не підтримує читання snapshot: кожна зона прочитана в момент свого запиту."}
+        ${r.cache_hit ? ` <span class="badge gen">з кешу, обчислено ${esc(stamp(r.generated_at))}</span>` : ""}</p>
+      <div class="mr-zones">${zones.map((z, i) => `
+        <div class="tablet mr-zone${z.error ? " failed" : ""}" style="--zone:${ZONE_COLORS[i % ZONE_COLORS.length]}">
+          <div class="l">map · зона ${z.index + 1} · ключі ${esc(z.label)}</div>
+          <div class="v">${z.error ? "недоступна" : esc(z.shard || "один вузол")}</div>
+          ${z.error ? `<div class="s warn">${esc(z.error)}</div>`
+            : `<div class="s">${fmt(z.documents)} ${plural(z.documents, "пригода", "пригоди", "пригод")} → ${fmt(z.groups)} ${plural(z.groups, "група", "групи", "груп")}</div>
+               <div class="s hot">${ms(z.elapsed_ms)} на шарді</div>`}
+        </div>`).join("")}</div>
+      <div class="mr-arrow" aria-hidden="true">↓ назад передаються лише часткові агрегати груп, а не документи ↓</div>
+      <div class="tablet key mr-reduce">
+        <div class="l">reduce у застосунку</div>
+        <div class="v">${fmt(r.groups_total)} ${plural(r.groups_total, "ніша", "ніші", "ніш")} · ${fmt(r.documents)} ${plural(r.documents, "пригода", "пригоди", "пригод")}</div>
+        <div class="s">зведено ${answered} з ${zones.length} часткових результатів за ${ms(r.reduce_ms)}</div>
+      </div>
+      <div class="inscription mr-times"><span>паралельно <b>${ms(r.map_max_ms)}</b></span>
+        <span>послідовно було б <b>${ms(r.map_sum_ms)}</b>${speedup ? ` (×${fmt1(speedup)})` : ""}</span>
+        <span>увесь збір <b>${ms(r.gather_ms)}</b></span></div>
+      <div class="mr-check">${m.error ? `<span class="badge empty">недоступна</span> Вбудована агрегація: ${esc(m.error)}`
+        : `${verdict} Той самий запит однією агрегацією через mongos: <b>${ms(m.elapsed_ms)}</b>, ${fmt(m.groups)} груп, ${fmt(m.documents)} пригод.
+          <br><span class="muted small">Маршрутизатор сам поділив конвеєр: на шардах (${esc((m.shards || []).join(", ") || "—")}) — ${stages(m.shards_part)};
+          злиття${m.merge_type ? ` (${esc(m.merge_type)})` : ""} — ${stages(m.merger_part)}.</span>`}</div>
+      ${r.complete ? "" : `<div class="error">Неповний звіт: відповіли ${answered} з ${zones.length} зон (≈ ${pct(r.coverage)} каталогу).
+        Ключ розподілу — хеш, тож кожна зона є рівномірною вибіркою каталогу: частки й середні — оцінки за вибіркою.
+        Неповний звіт не кешується.</div>`}
+    </div>`;
+
+  const rows = r.rows || [];
+  $("atlas-rows").innerHTML = rows.map((row, i) => `<tr>
+      <td class="num">${i + 1}</td>
+      <td class="q">${row.key === "" ? `<span class="muted">${esc(nicheName(r.dimension, row.key))}</span>` : esc(nicheName(r.dimension, row.key))}</td>
+      <td class="num">${fmt(row.adventures)}</td><td class="num">${pct(row.share)}</td>
+      <td class="num">${row.avg_rating == null ? "—" : fmt1(row.avg_rating)}</td><td class="num">${row.median_rating == null ? "—" : fmt1(row.median_rating)}</td>
+      <td class="num">${fmt(row.rated)}</td><td class="num">${fmt(row.reviews_total)}</td>
+      <td class="num">${pct(row.free_share)}</td><td class="num">${row.avg_price == null ? "—" : USD.format(row.avg_price)}</td>
+      <td class="num">${row.avg_duration == null ? "—" : `${fmt1(row.avg_duration)} год`}</td>
+      <td>${row.year_min == null ? "—" : row.year_min === row.year_max ? row.year_min : `${row.year_min}–${row.year_max}`}</td>
+      <td class="num">${pct(row.collected_share)}</td></tr>`).join("")
+    || '<tr><td colspan="13" class="muted">Пригод ще немає: запустіть генератор або завантажте CSV у кузні даних.</td></tr>';
+
+  $("atlas-legend").innerHTML = zones.map((z, i) => `<span><i style="border-color:${ZONE_COLORS[i % ZONE_COLORS.length]}"></i>${esc(z.shard || `зона ${z.index + 1}`)} · ключі ${esc(z.label)}</span>`).join("");
+  drawAtlasChart(r, rows.slice(0, 15), zones);
+}
+
+function drawAtlasChart(r, rows, zones) {
+  if (!window.Chart || !$("atlas-chart")) return;
+  atlas.chart?.destroy();
+  atlas.chart = new window.Chart($("atlas-chart"), {
+    type: "bar",
+    data: {
+      labels: rows.map((row) => nicheName(r.dimension, row.key)),
+      datasets: zones.map((z, i) => ({
+        label: z.shard || `зона ${z.index + 1}`,
+        data: rows.map((row) => (row.by_zone || [])[i] || 0),
+        backgroundColor: ZONE_COLORS[i % ZONE_COLORS.length],
+        borderWidth: 0,
+        barPercentage: 0.8,
+      })),
+    },
+    options: {
+      indexAxis: "y", locale: "uk-UA", animation: false, responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { stacked: true, beginAtZero: true, ticks: { color: "#a8917c", font: { family: "Alegreya Sans" } }, grid: { color: "rgba(59,40,27,.6)" }, border: { color: "#3b281b" } },
+        y: { stacked: true, ticks: { color: "#d8c6ae", font: { family: "Alegreya Sans", size: 13 } }, grid: { display: false }, border: { color: "#3b281b" } },
+      },
+    },
+  });
+}
 
 // ================================================================ КУЗНЯ (моніторинг)
 const RATE_MIN = 10;

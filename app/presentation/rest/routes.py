@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from app.presentation.rest.controllers import (
     AdminController,
+    AnalyticsController,
     CardController,
     ErrorTranslator,
     SearchController,
@@ -79,6 +80,7 @@ class RouteRegistry:
         ("GET", "/api/adventures/{adventure_id}/similar", "CardController → GetRecommendationsUseCase"),
         ("GET", "/api/adventures/{adventure_id}/chain", "CardController → GetRecommendationsUseCase"),
         ("GET", "/api/statistics/{report}", "StatisticsController → GetPlayStatisticsUseCase"),
+        ("GET", "/api/analytics/niches", "AnalyticsController → GetNicheAnalyticsUseCase"),
         ("GET", "/api/stats/stream", "StatsStream → GetLiveStatsUseCase"),
         ("GET", "/api/rate", "AdminController → ConfigureRateUseCase"),
         ("POST", "/api/rate", "AdminController → ConfigureRateUseCase"),
@@ -90,6 +92,7 @@ class RouteRegistry:
         self._search: SearchController | None = None
         self._cards: CardController | None = None
         self._statistics: StatisticsController | None = None
+        self._analytics: AnalyticsController | None = None
         self._admin: AdminController | None = None
         self._stream: StatsStream | None = None
         self._errors = ErrorTranslator()
@@ -101,6 +104,7 @@ class RouteRegistry:
         self._cards = CardController(use_cases.adventure_card, use_cases.monster_card, use_cases.character_card,
                                      use_cases.author_card, use_cases.recommendations)
         self._statistics = StatisticsController(use_cases.play_statistics)
+        self._analytics = AnalyticsController(use_cases.niche_analytics)
         self._admin = AdminController(use_cases.configure_rate)
         self._stream = StatsStream(use_cases.live_stats)
 
@@ -189,6 +193,17 @@ class RouteRegistry:
         ) -> dict:
             return await registry._statistics.play_stats(
                 {"report": report, "char_class": char_class, "level": level, "limit": limit})
+
+        @app.get("/api/analytics/niches")
+        async def niche_analytics(
+            dimension: Literal["tag", "system", "setting", "tier", "year"] = "tag",
+            scope: Literal["all", "collected", "generated"] = "all",
+            order: Literal["count", "rating"] = "count",
+            limit: int = Query(20, ge=1, le=100),
+            refresh: bool = False,
+        ) -> dict:
+            return await registry._analytics.niches(
+                {"dimension": dimension, "scope": scope, "order": order, "limit": limit, "refresh": refresh})
 
         @app.get("/api/stats/stream")
         async def stats_stream() -> StreamingResponse:
